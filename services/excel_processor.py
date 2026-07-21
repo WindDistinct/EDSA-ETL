@@ -1,10 +1,19 @@
 from datetime import datetime
+from time import perf_counter
 
 from pathlib import Path
 
 import pandas as pd
 import time
 
+from dataclasses import dataclass
+
+@dataclass
+class ProcessingStats:
+    processed: int = 0
+    success: int = 0
+    errors: int = 0
+    not_found: int = 0
 
 class ExcelProcessor:
 
@@ -17,6 +26,7 @@ class ExcelProcessor:
         self.fmtrack_client = fmtrack_client
         self.batch_size = batch_size
         self.batch_delay = batch_delay
+        self.stats = ProcessingStats()
 
     def _format_datetime(self, value: str) -> str:
         """
@@ -49,6 +59,7 @@ class ExcelProcessor:
         vehicle = objects.get(placa)
 
         if not vehicle:
+            self.stats.not_found += 1
             return {}
 
         object_id = vehicle["object_id"]
@@ -63,16 +74,14 @@ class ExcelProcessor:
         )
 
         if not coordinate:
-            print(
-                f"Sin coordenadas: placa={placa}, fecha={track_datetime}"
-            )
-            
             self.failed_rows.append({
                 "PLACA": placa,
                 "FECHA_HORA_TRACK": row["FECHA_HORA_TRACK"],
             })
 
             return {}
+
+        self.stats.success += 1
 
         return {
             "LATITUD": coordinate["latitude"],
@@ -85,6 +94,8 @@ class ExcelProcessor:
         input_file: str,
         output_file: str,
     ) -> None:
+
+        start_time = perf_counter()
 
         processed = 0
 
@@ -170,7 +181,9 @@ class ExcelProcessor:
                         df.at[index, column] = value
 
                 except Exception as ex:
-
+                    
+                    self.stats.errors += 1
+                    
                     print(
                         f"Error procesando fila {index}: {ex}"
                     )
@@ -192,7 +205,6 @@ class ExcelProcessor:
                     self.batch_delay
                 )
 
-        # Eliminamos columna auxiliar
         df.drop(
             columns=["OBJECT_ID"],
             inplace=True,
@@ -202,6 +214,22 @@ class ExcelProcessor:
             output_file,
             index=False,
         )
+
+        elapsed = perf_counter() - start_time
+
+        print()
+        print("=" * 45)
+        print("PROCESAMIENTO FINALIZADO")
+        print("=" * 45)
+
+        print(f"Registros procesados : {total_rows}")
+        print(f"Consultas exitosas   : {self.stats.success}")
+        print(f"Placas no encontradas: {self.stats.not_found}")
+        print(f"Errores              : {self.stats.errors}")
+
+        print(f"Tiempo total         : {elapsed:.2f} segundos")
+
+        print("=" * 45)
 
         print(
             "Archivo generado correctamente."
