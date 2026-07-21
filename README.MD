@@ -1,139 +1,363 @@
-# FM Track Excel Enricher
+# ATU Files Processor
 
-## Descripción
+Sistema de procesamiento y transformación de archivos operacionales ATU para generar trazabilidad GPS de recorridos mediante integración con FM Track.
 
-FM Track Excel Enricher es una herramienta desarrollada en Python para enriquecer reportes de Excel con información histórica obtenida desde la API de FM Track.
-
-A partir de un archivo Excel que contiene información de viajes y vehículos, el sistema consulta automáticamente la posición histórica correspondiente a cada registro y reemplaza las columnas de:
-
-- Latitud
-- Longitud
-- Velocidad
-
-El resultado es un nuevo archivo Excel listo para ser utilizado en procesos de análisis o generación de reportes.
+El flujo permite transformar archivos operacionales históricos en documentos enriquecidos con información de vehículos, fechas de tramo y puntos GPS obtenidos desde la API de FM Track.
 
 ---
 
-## Características
+## Objetivo
 
-- Lectura de archivos Excel (.xlsx).
-- Integración con la API REST de FM Track.
-- Resolución automática de vehículos mediante placa.
-- Consulta de coordenadas históricas por fecha y hora.
-- Reemplazo automático de las columnas:
-  - LATITUD
-  - LONGITUD
-  - VELOCIDAD
+El objetivo principal es procesar recorridos operacionales y generar un dataset de puntos GPS asociado a:
 
-- Procesamiento por lotes para respetar límites de la API.
-- Pausas configurables entre lotes.
-- Manejo de múltiples API Keys.
-- Arquitectura modular para facilitar futuras extensiones.
+- Empresa
+- Vehículo
+- Ruta
+- Sentido del recorrido
+- Conductor
+- Tramo operativo
+- Coordenadas GPS históricas
+
+El resultado final permite almacenar y analizar los recorridos realizados por cada vehículo.
 
 ---
 
-## Estructura del proyecto
+# Flujo general
 
-```text
+El procesamiento está dividido en etapas independientes:
+
+```
+Documento operacional
+        |
+        v
+OperationalProcessor
+        |
+        v
+Documento operacional procesado
+        |
+        v
+PartitionSplitter
+        |
+        v
+Particiones de procesamiento
+        |
+        v
+PipelineProcessor
+        |
+        +----------------+
+        |                |
+        v                v
+VehicleResolver     TrackPointsProcessor
+        |                |
+        |                v
+        |          API FM Track
+        |
+        v
+TrackPointsWriter
+        |
+        v
+Documento final de Track Points
+```
+
+---
+
+# Estructura del proyecto
+
+```
 ATU_Files/
 │
 ├── client/
-│   └── fmtrack_client.py      # Cliente HTTP para FM Track
+│   └── fmtrack_client.py
 │
 ├── services/
-│   └── excel_processor.py     # Procesamiento del archivo Excel
+│   ├── operational_processor.py
+│   ├── partition_splitter.py
+│   ├── pipeline_processor.py
+│   ├── trackpoints_processor.py
+│   ├── trackpoints_writer.py
+│   └── vehicle_resolver.py
 │
-├── input/                     # Archivos de entrada
-├── output/                    # Archivos generados
+├── input/
+│   ├── documento_operacional.xlsx
+│   └── documento_limpio.xlsx
 │
-├── config.py                  # Configuración de la aplicación
-├── main.py                    # Punto de entrada
-├── requirements.txt
-└── .env
+├── output/
+│   ├── documento_operacional_procesado.xlsx
+│   ├── partitions/
+│   └── trackpoints/
+│
+├── main.py
+└── README.md
 ```
 
 ---
 
-## Requisitos
+# Fuentes de datos
 
-- Python 3.12 o superior
-- Cuenta con acceso a FM Track
-- API Keys válidas
+## Documento operacional
 
----
+Archivo origen generado por ATU.
 
-## Instalación
+Contiene:
 
-Clonar el repositorio:
+- Fecha del despacho
+- Hora inicio
+- Placa
+- Conductor
+- Estado del viaje
+- Último punto real
+- Último punto calculado
+- Sentido del recorrido
 
-```bash
-git clone <repository_url>
+Tiene dos hojas:
 
-cd ATU_Files
-```
+- `Ida`
+- `Vuelta`
 
-Crear un entorno virtual:
+La aplicación las unifica utilizando:
 
-```bash
-python -m venv .venv
-```
-
-Activar el entorno:
-
-### Windows
-
-```bash
-.venv\Scripts\activate
-```
-
-### Linux / macOS
-
-```bash
-source .venv/bin/activate
-```
-
-Instalar dependencias:
-
-```bash
-pip install -r requirements.txt
-```
+| Valor | Descripción |
+| ----- | ----------- |
+| 0     | Ida         |
+| 1     | Vuelta      |
 
 ---
 
-## Configuración
+## Documento limpio
 
-Crear un archivo `.env` en la raíz del proyecto.
+Documento base utilizado para obtener metadata.
+
+Se utiliza para:
+
+- Obtener RUC empresa
+- Obtener código de ruta
+- Obtener relación:
+
+```
+PLACA -> IMEI
+```
+
+El `OBJECT_ID` no proviene del documento limpio.
+
+Este dato se obtiene consultando FM Track utilizando la placa.
+
+---
+
+# Etapa 1: Procesamiento operacional
+
+Clase:
+
+```
+services/operational_processor.py
+```
+
+Responsabilidades:
+
+- Leer hojas Ida/Vuelta
+- Normalizar columnas
+- Generar `FECHORA_INI_VIAJE`
+- Convertir fechas de último punto
+- Extraer documento del conductor
+- Agregar IMEI según placa
+- Agregar RUC y ruta
+- Generar documento estándar para procesamiento posterior
+
+Salida:
+
+```
+documento_operacional_procesado.xlsx
+```
+
+Formato:
+
+| Campo                          | Descripción                |
+| ------------------------------ | -------------------------- |
+| RUC_EMPRESA                    | Empresa operadora          |
+| PLACA                          | Identificador del vehículo |
+| IMEI                           | Identificador GPS          |
+| CODIGO_RUTA                    | Ruta operacional           |
+| FECHORA_INI_VIAJE              | Inicio del tramo           |
+| FECHA_HORA_FIN_TRAMO           | Fin real                   |
+| FECHA_HORA_FIN_TRAMO_CALCULADA | Fin calculado              |
+| SENTIDO                        | Ida/Vuelta                 |
+| NRO_DOC_CONDUCTOR              | Documento conductor        |
+
+---
+
+# Etapa 2: Particionado
+
+Clase:
+
+```
+services/partition_splitter.py
+```
+
+Responsabilidad:
+
+Dividir grandes archivos en bloques manejables.
+
+Actualmente genera 4 particiones simétricas basadas en rango temporal.
 
 Ejemplo:
 
-```env
-FMTRACK_API_KEY=xxxxxxxxxxxxxxxx
-FMTRACK_API_KEY_INTER=xxxxxxxxxxxxxxxx
+```
+part_01_2026-06-03_2026-06-15.xlsx
+part_02_2026-06-15_2026-06-25.xlsx
+part_03_2026-06-25_2026-07-05.xlsx
+part_04_2026-07-05_2026-07-15.xlsx
+```
 
-FMTRACK_BASE_URL=https://api.fm-track.com
+Cada archivo conserva:
+
+- Columnas originales
+- Orden temporal
+- Registros completos
+
+---
+
+# Etapa 3: Resolución de vehículos FM Track
+
+Antes de consultar coordenadas se obtiene el catálogo:
+
+```
+PLACA -> OBJECT_ID
+```
+
+Ejemplo:
+
+```json
+{
+  "A0P736": {
+    "object_id": "53625cee-2df2-11f1-833b-af5c1df1550e",
+    "imei": "863238075031916",
+    "credential": "default"
+  }
+}
+```
+
+El `OBJECT_ID` es requerido por FM Track para consultar posiciones.
+
+---
+
+# Etapa 4: Obtención de Track Points
+
+Clase:
+
+```
+services/trackpoints_processor.py
+```
+
+Responsabilidades:
+
+- Recibir un tramo operacional
+- Resolver fechas
+- Consultar coordenadas FM Track
+- Manejar paginación
+- Enriquecer puntos GPS
+
+Consulta utilizada:
+
+```
+GET /objects/{objectId}/coordinates
+```
+
+Parámetros:
+
+- object_id
+- from_datetime
+- to_datetime
+- continuation_token
+- limit
+
+---
+
+## Paginación
+
+FM Track devuelve máximo:
+
+```
+1000 puntos por página
+```
+
+El procesador maneja automáticamente:
+
+```
+Página 1
+    |
+    v
+continuation_token
+    |
+    v
+Página 2
+    |
+    v
+...
+```
+
+Ejemplo:
+
+```
+[object_id]
+Página 1: 1000 puntos
+Página 2: 1000 puntos
+Página 3: 524 puntos
+
+Total: 2524 puntos
 ```
 
 ---
 
-## Formato esperado del Excel
+# Etapa 5: Escritura de resultados
 
-El archivo de entrada debe contener, como mínimo, las siguientes columnas:
+Clase:
 
-| Columna          |
-| ---------------- |
-| PLACA            |
-| FECHA_HORA_TRACK |
-| LATITUD          |
-| LONGITUD         |
-| VELOCIDAD        |
+```
+services/trackpoints_writer.py
+```
 
-Las demás columnas se conservan sin modificaciones.
+Responsabilidad:
+
+Guardar resultados incrementalmente.
+
+Formato:
+
+```
+trackpoints_part_01.xlsx
+```
+
+Estructura:
+
+```
+Hoja:
+2026-06-03
+
+2026-06-04
+
+2026-06-05
+```
+
+Cada hoja corresponde a un día.
+
+Columnas:
+
+| Campo             |
+| ----------------- |
+| RUC_EMPRESA       |
+| PLACA             |
+| IMEI              |
+| CODIGO_RUTA       |
+| SENTIDO           |
+| NRO_DOC_CONDUCTOR |
+| INICIO_TRAMO      |
+| FIN_TRAMO         |
+| FECHA_HORA_TRACK  |
+| LATITUD           |
+| LONGITUD          |
+| VELOCIDAD         |
 
 ---
 
-## Ejecución
-
-Colocar el archivo Excel dentro de la carpeta `input`.
+# Ejecución
 
 Ejecutar:
 
@@ -141,82 +365,78 @@ Ejecutar:
 python main.py
 ```
 
-El archivo enriquecido será generado en la carpeta `output`.
-
----
-
-## Flujo de procesamiento
-
-```text
-Excel
-    │
-    ▼
-Leer registros
-    │
-    ▼
-Consultar vehículos en FM Track
-    │
-    ▼
-Resolver object_id mediante placa
-    │
-    ▼
-Consultar coordenadas históricas
-    │
-    ▼
-Actualizar:
-    • LATITUD
-    • LONGITUD
-    • VELOCIDAD
-    │
-    ▼
-Exportar nuevo Excel
-```
-
----
-
-## Procesamiento por lotes
-
-Para respetar las restricciones de la API, el procesamiento se realiza por lotes configurables.
-
-Parámetros disponibles:
-
-- `batch_size`
-- `batch_delay`
-
-Ejemplo:
+Ejemplo de flujo:
 
 ```python
-processor = ExcelProcessor(
-    client,
-    batch_size=1000,
-    batch_delay=10,
+processor.process(
+    input_file="output/partitions/part_01.xlsx",
+    output_file="output/trackpoints_part_01.xlsx",
 )
 ```
 
 ---
 
-## Tecnologías utilizadas
+# Dependencias
 
-- Python
-- Pandas
-- OpenPyXL
-- HTTPX
-- python-dotenv
-- FM Track REST API
+Instalar:
 
----
+```bash
+pip install -r requirements.txt
+```
 
-## Posibles mejoras
+Principales librerías:
 
-- Procesamiento concurrente con límite de conexiones.
-- Barra de progreso en consola.
-- Reintentos automáticos ante errores temporales.
-- Registro de errores en archivo separado.
-- Interfaz gráfica para usuarios no técnicos.
-- Empaquetado como ejecutable para Windows.
+- pandas
+- openpyxl
+- requests
 
 ---
 
-## Licencia
+# Consideraciones técnicas
 
-Este proyecto fue desarrollado para automatizar la generación de reportes enriquecidos utilizando la plataforma FM Track.
+## Volumen de datos
+
+El sistema está diseñado para trabajar con grandes cantidades de puntos GPS.
+
+Ejemplo:
+
+- 1000 vehículos
+- 1 punto cada 10 segundos
+
+Puede superar:
+
+```
+150 millones registros / mes
+```
+
+Por ello:
+
+- El procesamiento está particionado.
+- La escritura es incremental.
+- No se mantienen todos los puntos en memoria.
+
+---
+
+## Manejo de errores
+
+Cada tramo se procesa individualmente.
+
+Un fallo en un vehículo no detiene todo el lote.
+
+Ejemplo:
+
+```
+[ERROR] A0P736 -> No existe fecha final
+```
+
+El procesamiento continúa con el siguiente tramo.
+
+---
+
+# Próximas mejoras previstas
+
+- Procesamiento paralelo de particiones.
+- Reintentos automáticos ante errores FM Track.
+- Control de progreso.
+- Optimización para procesamiento batch masivo.
+- Eliminación de campos temporales antes de exportación final.

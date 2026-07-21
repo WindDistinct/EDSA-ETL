@@ -86,11 +86,7 @@ class PipelineProcessor:
             sheets.values(),
             ignore_index=True,
         )
-
-        print(len(df))
-
-        print(df.groupby(df["FECHORA_INI_VIAJE"]).size())
-
+        
         objects = self._load_objects()
 
         df = self._attach_object_ids(
