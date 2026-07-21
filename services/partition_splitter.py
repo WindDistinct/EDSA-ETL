@@ -95,17 +95,33 @@ class PartitionSplitter:
 
             file = output_folder / filename
 
-            data.drop(
-                columns=["PARTITION"]
-            ).to_excel(
+            with pd.ExcelWriter(
                 file,
-                index=False,
-            )
+                engine="openpyxl",
+            ) as writer:
+
+                data = (
+                    data
+                    .drop(columns=["PARTITION"])
+                )
+
+                data["FECHA"] = (
+                    data["FECHORA_INI_VIAJE"]
+                    .dt.strftime("%Y-%m-%d")
+                )
+
+                for day, daily_data in data.groupby("FECHA"):
+
+                    daily_data.drop(
+                        columns=["FECHA"]
+                    ).to_excel(
+                        writer,
+                        sheet_name=day,
+                        index=False,
+                    )
 
             generated.append(file)
-            
-            print("\nArchivos generados:")
-            
+
             print(
                 f"Partición {partition:02}: "
                 f"{len(data)} registros "
