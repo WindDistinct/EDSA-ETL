@@ -107,10 +107,6 @@ class TrackPointsProcessor:
 
             items = response.get("items") or []
 
-            print(
-                f"[{object_id}] Página {page}: {len(items)} puntos"
-            )
-
             total_items += len(items)
 
             for item in items:
@@ -134,10 +130,6 @@ class TrackPointsProcessor:
                 break
 
             page += 1
-
-        print(
-            f"[{object_id}] Total: {page} páginas, {total_items} puntos"
-        )
 
         return points
     
