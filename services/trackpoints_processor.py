@@ -56,7 +56,7 @@ class TrackPointsProcessor:
     ) -> tuple[datetime, datetime]:
 
         start = self._resolve_datetime(
-            row["FECHA_HORA_TRACK"]
+            row["FECHORA_INI_VIAJE"]
         )
 
         end = self._resolve_datetime(
@@ -209,4 +209,49 @@ class TrackPointsProcessor:
 
         return grouped
     
-    
+    def process_dataframe(
+        self,
+        df,
+    ) -> list[dict]:
+
+        all_points = []
+
+        total = len(df)
+
+        print(
+            f"Iniciando procesamiento de {total} tramos..."
+        )
+
+        for index, row in df.iterrows():
+
+            try:
+
+                points = self.process_row(
+                    row
+                )
+
+                all_points.extend(
+                    points
+                )
+
+
+            except Exception as ex:
+
+                print(
+                    f"[ERROR] fila {index} "
+                    f"{row.get('PLACA')} -> {ex}"
+                )
+
+
+            if (index + 1) % 100 == 0:
+
+                print(
+                    f"Procesadas {index + 1}/{total}"
+                )
+
+
+        print(
+            f"Total track points generados: {len(all_points)}"
+        )
+
+        return all_points
