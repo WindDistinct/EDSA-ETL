@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any
+from client.fmtrack_client import FMTrackClient
 
 class TrackPointsProcessor:
 
@@ -8,6 +9,22 @@ class TrackPointsProcessor:
         fmtrack_client,
     ):
         self.fmtrack_client = fmtrack_client
+        
+    def _format_datetime(
+        self,
+        value: datetime,
+    ) -> str:
+
+        return (
+            value.astimezone()
+            .isoformat(
+                timespec="milliseconds"
+            )
+            .replace(
+                "+00:00",
+                "Z"
+            )
+        )
 
     def _resolve_datetime(
         self,
@@ -79,14 +96,16 @@ class TrackPointsProcessor:
 
             response = self.fmtrack_client.get_object_coordinates(
                 object_id=object_id,
-                from_datetime=start.isoformat(),
-                to_datetime=end.isoformat(),
+                from_datetime=self._format_datetime(start),
+                to_datetime=self._format_datetime(end),
                 continuation_token=continuation_token,
                 limit=1000,
             )
 
-            items = response.get("items", [])
-
+            items = response.get(
+                "items"
+            ) or []
+            
             for item in items:
 
                 position = item.get("position", {})
@@ -110,54 +129,61 @@ class TrackPointsProcessor:
         return points
     
     def process_row(
-    self,
-    row,
-) -> list[dict]:
-        """
-        Procesa un único tramo y devuelve todos los track points
-        enriquecidos con la información del tramo.
-        """
+        self,
+        row,
+    ) -> list[dict]:
+            """
+            Procesa un único tramo y devuelve todos los track points
+            enriquecidos con la información del tramo.
+            """
 
-        object_id = row.get("OBJECT_ID")
+            object_id = row.get("OBJECT_ID")
 
-        if not object_id:
-            raise ValueError(
-                "La fila no contiene OBJECT_ID."
+            if not object_id:
+                raise ValueError(
+                    "La fila no contiene OBJECT_ID."
+                )
+
+            start, end = self._get_track_range(
+                row
             )
 
-        start, end = self._get_track_range(
-            row
-        )
-
-        points = self._get_track_points(
-            object_id=object_id,
-            start=start,
-            end=end,
-        )
-
-        enriched_points = []
-
-        for point in points:
-
-            enriched_points.append(
-                {
-                    "placa": row.get("PLACA"),
-                    "imei": row.get("IMEI"),
-                    "codigo_ruta": row.get("CODIGO_RUTA"),
-                    "object_id": object_id,
-                    "inicio_tramo": start.isoformat(),
-                    "fin_tramo": end.isoformat(),
-                    **point,
-                }
+            points = self._get_track_points(
+                object_id=object_id,
+                start=start,
+                end=end,
             )
 
-        print(
-            f"[TRACK] {row.get('PLACA')} -> "
-            f"{len(enriched_points)} puntos "
-            f"({start} -> {end})"
-        )
+            enriched_points = []
 
-        return enriched_points
+            for point in points:
+
+                enriched_points.append(
+                    {
+                        "ruc_empresa": row.get("RUC_EMPRESA"),
+                        "placa": row.get("PLACA"),
+                        "imei": row.get("IMEI"),
+                        "codigo_ruta": row.get("CODIGO_RUTA"),
+                        "sentido": row.get("SENTIDO"),
+                        "nro_doc_conductor": row.get(
+                            "NRO_DOC_CONDUCTOR"
+                        ),
+                        "object_id": object_id,
+                        "inicio_tramo": self._format_datetime(start),
+                        "fin_tramo": self._format_datetime(end),
+                        **point,
+                    }
+                )
+
+            if not points:
+                print(
+                    f"[WARN] {row.get('PLACA')} -> "
+                    "sin puntos encontrados"
+                )
+
+                return []
+
+            return enriched_points
     
     def _group_points_by_day(
         self,
