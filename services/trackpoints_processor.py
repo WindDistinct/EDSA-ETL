@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Any
-from client.fmtrack_client import FMTrackClient
 
 class TrackPointsProcessor:
 
@@ -82,15 +81,19 @@ class TrackPointsProcessor:
         return start, end
 
     def _get_track_points(
-        self,
-        object_id: str,
-        start: datetime,
-        end: datetime,
-    ) -> list[dict]:
+    self,
+    object_id: str,
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
 
         points: list[dict] = []
 
         continuation_token = None
+
+        page = 1
+
+        total_items = 0
 
         while True:
 
@@ -102,10 +105,14 @@ class TrackPointsProcessor:
                 limit=1000,
             )
 
-            items = response.get(
-                "items"
-            ) or []
-            
+            items = response.get("items") or []
+
+            print(
+                f"[{object_id}] Página {page}: {len(items)} puntos"
+            )
+
+            total_items += len(items)
+
             for item in items:
 
                 position = item.get("position", {})
@@ -118,7 +125,7 @@ class TrackPointsProcessor:
                         "speed": position.get("speed"),
                     }
                 )
-            
+
             continuation_token = response.get(
                 "continuation_token"
             )
@@ -126,16 +133,20 @@ class TrackPointsProcessor:
             if continuation_token is None:
                 break
 
+            page += 1
+
+        print(
+            f"[{object_id}] Total: {page} páginas, {total_items} puntos"
+        )
+
         return points
     
     def process_row(
         self,
         row,
-    ) -> list[dict]:
-            """
-            Procesa un único tramo y devuelve todos los track points
-            enriquecidos con la información del tramo.
-            """
+    ) -> dict:
+
+        try:
 
             object_id = row.get("OBJECT_ID")
 
@@ -165,93 +176,24 @@ class TrackPointsProcessor:
                         "imei": row.get("IMEI"),
                         "codigo_ruta": row.get("CODIGO_RUTA"),
                         "sentido": row.get("SENTIDO"),
-                        "nro_doc_conductor": row.get(
-                            "NRO_DOC_CONDUCTOR"
-                        ),
+                        "nro_doc_conductor": row.get("NRO_DOC_CONDUCTOR"),
                         "object_id": object_id,
-                        "inicio_tramo": self._format_datetime(start),
-                        "fin_tramo": self._format_datetime(end),
+                        "inicio_tramo": start.isoformat(),
+                        "fin_tramo": end.isoformat(),
                         **point,
                     }
                 )
 
-            if not points:
-                print(
-                    f"[WARN] {row.get('PLACA')} -> "
-                    "sin puntos encontrados"
-                )
+            return {
+                "success": True,
+                "points": enriched_points,
+                "error": None,
+            }
 
-                return []
+        except Exception as ex:
 
-            return enriched_points
-    
-    def _group_points_by_day(
-        self,
-        points: list[dict],
-    ) -> dict[str, list[dict]]:
-
-        grouped: dict[str, list[dict]] = {}
-
-        for point in points:
-
-            day = (
-                datetime.fromisoformat(
-                    point["datetime"].replace("Z", "+00:00")
-                )
-                .date()
-                .isoformat()
-            )
-
-            grouped.setdefault(
-                day,
-                []
-            ).append(point)
-
-        return grouped
-    
-    def process_dataframe(
-        self,
-        df,
-    ) -> list[dict]:
-
-        all_points = []
-
-        total = len(df)
-
-        print(
-            f"Iniciando procesamiento de {total} tramos..."
-        )
-
-        for index, row in df.iterrows():
-
-            try:
-
-                points = self.process_row(
-                    row
-                )
-
-                all_points.extend(
-                    points
-                )
-
-
-            except Exception as ex:
-
-                print(
-                    f"[ERROR] fila {index} "
-                    f"{row.get('PLACA')} -> {ex}"
-                )
-
-
-            if (index + 1) % 100 == 0:
-
-                print(
-                    f"Procesadas {index + 1}/{total}"
-                )
-
-
-        print(
-            f"Total track points generados: {len(all_points)}"
-        )
-
-        return all_points
+            return {
+                "success": False,
+                "points": [],
+                "error": str(ex),
+            }

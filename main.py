@@ -1,17 +1,26 @@
 from client.fmtrack_client import FMTrackClient
-from services.excel_processor import ExcelProcessor
+from services.pipeline_processor import PipelineProcessor
 
 
-client = FMTrackClient()
+def main():
 
-try:
+    client = FMTrackClient()
 
-    processor = ExcelProcessor(client)
+    try:
 
-    processor.process(
-        "input/reporte.xlsx",
-        "output/reporte_test.xlsx",
-    )
+        processor = PipelineProcessor(
+            client
+        )
 
-finally:
-    client.close()
+        processor.process(
+            input_file="output/partitions/part_01_2026-06-03_2026-06-15.xlsx",
+            output_file="output/trackpoints_part_01.xlsx",
+        )
+
+    finally:
+
+        client.close()
+
+
+if __name__ == "__main__":
+    main()
