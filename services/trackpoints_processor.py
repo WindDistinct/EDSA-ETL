@@ -170,7 +170,7 @@ class TrackPointsProcessor:
                         "sentido": row.get("SENTIDO"),
                         "nro_doc_conductor": row.get("NRO_DOC_CONDUCTOR"),
                         "object_id": object_id,
-                        "inicio_tramo": start.isoformat(),
+                        "fechora_ini_viaje": start.isoformat(),
                         "fin_tramo": end.isoformat(),
                         **point,
                     }

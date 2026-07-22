@@ -10,14 +10,13 @@ class TrackPointsWriter:
         "PLACA",
         "IMEI",
         "CODIGO_RUTA",
-        "SENTIDO",
-        "NRO_DOC_CONDUCTOR",
-        "INICIO_TRAMO",
-        "FIN_TRAMO",
+        "FECHORA_INI_VIAJE",
         "FECHA_HORA_TRACK",
         "LATITUD",
         "LONGITUD",
         "VELOCIDAD",
+        "SENTIDO",
+        "NRO_DOC_CONDUCTOR",
     ]
 
     def __init__(self, output_file: str):
@@ -90,13 +89,12 @@ class TrackPointsWriter:
                     point["placa"],
                     point["imei"],
                     point["codigo_ruta"],
-                    point["sentido"],
-                    point["nro_doc_conductor"],
-                    point["inicio_tramo"],
-                    point["fin_tramo"],
+                    point["fechora_ini_viaje"],
                     point["datetime"],
                     point["latitude"],
                     point["longitude"],
                     point["speed"],
+                    point["sentido"],
+                    point["nro_doc_conductor"],
                 ]
             )
