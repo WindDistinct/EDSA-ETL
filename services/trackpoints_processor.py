@@ -1,5 +1,8 @@
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
+
+LOCAL_TZ = ZoneInfo("America/Lima")
 
 class TrackPointsProcessor:
 
@@ -28,6 +31,21 @@ class TrackPointsProcessor:
                 "+00:00",
                 "Z"
             )
+        )
+
+    def _to_local_isoformat(
+        self,
+        value: str,
+    ) -> str:
+
+        parsed = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+
+        return (
+            parsed.astimezone(LOCAL_TZ)
+            .replace(tzinfo=None)
+            .isoformat(timespec="milliseconds")
         )
 
     def _resolve_datetime(
@@ -59,12 +77,12 @@ class TrackPointsProcessor:
         row,
     ) -> tuple[datetime, datetime]:
 
-        start = (
+        start = self._resolve_datetime(
             row.get("START_DATETIME")
             or row.get("FECHORA_INI_VIAJE")
         )
 
-        end = (
+        end = self._resolve_datetime(
             row.get("END_DATETIME")
             or row.get("FECHA_HORA_FIN_TRAMO")
         )
@@ -130,7 +148,9 @@ class TrackPointsProcessor:
 
                 points.append(
                     {
-                        "datetime": item["datetime"],
+                        "datetime": self._to_local_isoformat(
+                            item["datetime"]
+                        ),
                         "latitude": position.get("latitude"),
                         "longitude": position.get("longitude"),
                         "speed": position.get("speed"),
