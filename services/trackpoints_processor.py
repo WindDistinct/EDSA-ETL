@@ -88,11 +88,11 @@ class TrackPointsProcessor:
         return start, end
 
     def _get_track_points(
-    self,
-    object_id: str,
-    start: datetime,
-    end: datetime,
-) -> list[dict]:
+        self,
+        object_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[dict]:
 
         points: list[dict] = []
 
@@ -118,6 +118,14 @@ class TrackPointsProcessor:
 
             for item in items:
 
+                ignition_status = item.get("ignition_status")
+
+                if (
+                    self.require_ignition_on
+                    and ignition_status != "ON"
+                ):
+                    continue
+
                 position = item.get("position", {})
 
                 points.append(
@@ -126,6 +134,7 @@ class TrackPointsProcessor:
                         "latitude": position.get("latitude"),
                         "longitude": position.get("longitude"),
                         "speed": position.get("speed"),
+                        "ignition_status": ignition_status,
                     }
                 )
 

@@ -1,5 +1,5 @@
 from client.fmtrack_client import FMTrackClient
-from services.pipeline_processor import PipelineProcessor
+from services.fixed_range_processor import FixedRangeProcessor
 
 
 def main():
@@ -8,13 +8,15 @@ def main():
 
     try:
 
-        processor = PipelineProcessor(
+        processor = FixedRangeProcessor(
             client
         )
 
         processor.process(
-            input_file="output/partitions/part_01_2026-06-03_2026-06-15.xlsx",
-            output_file="output/trackpoints_part_01.xlsx",
+            input_file="input/Tramas_2026_07_06_2026_07_12.xlsx",
+            output_file="output/Tramas_2026_07_06_2026_07_12.xlsx",
+            start_date="2026-07-06T19:00:00Z",
+            end_date="2026-07-13T03:43:00Z",
         )
 
     finally:

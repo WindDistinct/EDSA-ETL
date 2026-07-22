@@ -40,7 +40,7 @@ class FixedRangeProcessor:
 
         self.track_processor = TrackPointsProcessor(
             fmtrack_client,
-            require_ignition_on=True,
+            require_ignition_on=False,
         )
 
     def _parse_boundary(
@@ -155,7 +155,8 @@ class FixedRangeProcessor:
         df["END_DATETIME"] = end
 
         writer = TrackPointsWriter(
-            output_file
+            output_file,
+            include_ignition_status=True,
         )
 
         writer.open()

@@ -5,7 +5,7 @@ from openpyxl.workbook.workbook import Workbook as WorkbookType
 
 class TrackPointsWriter:
 
-    HEADERS = [
+    BASE_HEADERS = [
         "RUC_EMPRESA",
         "PLACA",
         "IMEI",
@@ -19,14 +19,26 @@ class TrackPointsWriter:
         "NRO_DOC_CONDUCTOR",
     ]
 
-    def __init__(self, output_file: str):
+    def __init__(
+        self,
+        output_file: str,
+        include_ignition_status: bool = False,
+    ):
 
         self.output_file = Path(output_file)
 
         self.workbook: Workbook | None = None
 
         self.sheets: dict[str, any] = {}
-        
+
+        self.include_ignition_status = include_ignition_status
+
+        self.headers = self.BASE_HEADERS + (
+            ["IGNITION_STATUS"]
+            if include_ignition_status
+            else []
+        )
+
     def open(self):
 
         if self.workbook is not None:
@@ -53,7 +65,7 @@ class TrackPointsWriter:
 
         ws = self.workbook.create_sheet(day)
 
-        ws.append(self.HEADERS)
+        ws.append(self.headers)
 
         self.sheets[day] = ws
 
@@ -83,18 +95,23 @@ class TrackPointsWriter:
 
             sheet = self._get_sheet(day)
 
-            sheet.append(
-                [
-                    point["ruc_empresa"],
-                    point["placa"],
-                    point["imei"],
-                    point["codigo_ruta"],
-                    point["fechora_ini_viaje"],
-                    point["datetime"],
-                    point["latitude"],
-                    point["longitude"],
-                    point["speed"],
-                    point["sentido"],
-                    point["nro_doc_conductor"],
-                ]
-            )
+            row = [
+                point["ruc_empresa"],
+                point["placa"],
+                point["imei"],
+                point["codigo_ruta"],
+                point["fechora_ini_viaje"],
+                point["datetime"],
+                point["latitude"],
+                point["longitude"],
+                point["speed"],
+                point["sentido"],
+                point["nro_doc_conductor"],
+            ]
+
+            if self.include_ignition_status:
+                row.append(
+                    point.get("ignition_status")
+                )
+
+            sheet.append(row)
