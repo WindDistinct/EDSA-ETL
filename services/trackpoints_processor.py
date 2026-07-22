@@ -6,13 +6,18 @@ class TrackPointsProcessor:
     def __init__(
         self,
         fmtrack_client,
+        require_ignition_on: bool = False,
     ):
         self.fmtrack_client = fmtrack_client
-        
+        self.require_ignition_on = require_ignition_on
+
     def _format_datetime(
         self,
         value: datetime,
     ) -> str:
+
+        if hasattr(value, "to_pydatetime"):
+            value = value.to_pydatetime()
 
         return (
             value.astimezone()
@@ -54,12 +59,14 @@ class TrackPointsProcessor:
         row,
     ) -> tuple[datetime, datetime]:
 
-        start = self._resolve_datetime(
-            row["FECHORA_INI_VIAJE"]
+        start = (
+            row.get("START_DATETIME")
+            or row.get("FECHORA_INI_VIAJE")
         )
 
-        end = self._resolve_datetime(
-            row["FECHA_HORA_FIN_TRAMO"]
+        end = (
+            row.get("END_DATETIME")
+            or row.get("FECHA_HORA_FIN_TRAMO")
         )
 
         if end is None:
