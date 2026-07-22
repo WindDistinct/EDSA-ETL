@@ -346,14 +346,13 @@ Columnas:
 | PLACA             |
 | IMEI              |
 | CODIGO_RUTA       |
-| SENTIDO           |
-| NRO_DOC_CONDUCTOR |
-| INICIO_TRAMO      |
-| FIN_TRAMO         |
+| FECHORA_INI_VIAJE |
 | FECHA_HORA_TRACK  |
 | LATITUD           |
 | LONGITUD          |
 | VELOCIDAD         |
+| SENTIDO           |
+| NRO_DOC_CONDUCTOR |
 
 ---
 
