@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from config import settings
+from domain.models import TrackPoint, Vehicle
+
+logger = logging.getLogger(__name__)
 
 
 class FMTrackClient:
@@ -58,7 +62,7 @@ class FMTrackClient:
 
         return response.json()
 
-    def get_objects(self) -> dict[str, dict[str, Any]]:
+    def get_objects(self) -> dict[str, Vehicle]:
         """
         Intenta obtener los objetos utilizando las API Keys disponibles.
         Retorna un diccionario indexado por placa.
@@ -75,7 +79,7 @@ class FMTrackClient:
                     api_key=credential["api_key"],
                 )
 
-                objects: dict[str, dict[str, Any]] = {}
+                objects: dict[str, Vehicle] = {}
 
                 for obj in data:
                     plate = obj.get("name")
@@ -83,24 +87,27 @@ class FMTrackClient:
                     if not plate:
                         continue
 
-                    objects[plate] = {
-                        "object_id": obj["id"],
-                        "imei": str(obj.get("imei", "")),
-                        "credential": credential["name"],
-                    }
+                    objects[plate] = Vehicle(
+                        plate=plate,
+                        object_id=obj["id"],
+                        imei=str(obj.get("imei", "")),
+                        credential=credential["name"],
+                    )
 
-                print(
-                    f"[OK] {credential['name']} -> {len(objects)} vehículos encontrados."
+                logger.info(
+                    "[OK] %s -> %d vehículos encontrados.",
+                    credential["name"],
+                    len(objects),
                 )
 
                 return objects
 
             except Exception as ex:
-                print(f"[ERROR] {credential['name']} -> {ex}")
+                logger.error("[ERROR] %s -> %s", credential["name"], ex)
                 last_exception = ex
 
         raise RuntimeError("No fue posible consultar FM Track.") from last_exception
-    
+
     def get_object(self, object_id: str) -> dict[str, Any]:
         """
         Obtiene un único objeto de FM Track por ID.
@@ -117,9 +124,7 @@ class FMTrackClient:
                     api_key=credential["api_key"],
                 )
 
-                print(
-                    f"[OK] {credential['name']} -> objeto encontrado."
-                )
+                logger.info("[OK] %s -> objeto encontrado.", credential["name"])
 
                 return {
                     **data,
@@ -127,11 +132,11 @@ class FMTrackClient:
                 }
 
             except Exception as ex:
-                print(f"[ERROR] {credential['name']} -> {ex}")
+                logger.error("[ERROR] %s -> %s", credential["name"], ex)
                 last_exception = ex
 
         raise RuntimeError("No fue posible consultar el objeto en FM Track.") from last_exception
-    
+
     def get_object_coordinates(
         self,
         object_id: str,
@@ -174,9 +179,7 @@ class FMTrackClient:
                     params=params,
                 )
 
-                print(
-                    f"[OK] {credential['name']} -> coordenadas obtenidas."
-                )
+                logger.info("[OK] %s -> coordenadas obtenidas.", credential["name"])
 
                 return {
                     **data,
@@ -184,21 +187,20 @@ class FMTrackClient:
                 }
 
             except Exception as ex:
-                print(f"[ERROR] {credential['name']} -> {ex}")
+                logger.error("[ERROR] %s -> %s", credential["name"], ex)
                 last_exception = ex
 
         raise RuntimeError(
             "No fue posible consultar las coordenadas del objeto."
         ) from last_exception
-        
-        
+
     def get_closest_coordinate(
         self,
         object_id: str,
         target_datetime: str,
         *,
         window_seconds: int = 30,
-    ) -> dict[str, Any] | None:
+    ) -> TrackPoint | None:
         """
         Obtiene la coordenada más cercana a un instante determinado.
 
@@ -259,9 +261,9 @@ class FMTrackClient:
 
         position = closest.get("position", {})
 
-        return {
-            "datetime": closest.get("datetime"),
-            "latitude": position.get("latitude"),
-            "longitude": position.get("longitude"),
-            "speed": position.get("speed"),
-        }
+        return TrackPoint(
+            datetime=closest.get("datetime"),
+            latitude=position.get("latitude"),
+            longitude=position.get("longitude"),
+            speed=position.get("speed"),
+        )

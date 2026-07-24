@@ -30,30 +30,30 @@ El procesamiento está dividido en etapas independientes:
 Documento operacional
         |
         v
-OperationalProcessor
+OperationalJob
         |
         v
 Documento operacional procesado
         |
         v
-PartitionSplitter
+PartitionSplitJob
         |
         v
 Particiones de procesamiento
         |
         v
-PipelineProcessor
+PipelineJob (o FixedRangeJob, si el rango es fijo)
         |
         +----------------+
         |                |
         v                v
-VehicleResolver     TrackPointsProcessor
+VehicleCatalog      TripResolver
         |                |
         |                v
         |          API FM Track
         |
         v
-TrackPointsWriter
+TrackRecordWriter
         |
         v
 Documento final de Track Points
@@ -66,16 +66,31 @@ Documento final de Track Points
 ```
 ATU_Files/
 │
-├── client/
-│   └── fmtrack_client.py
+├── domain/                        # Modelos y reglas puras (sin pandas/httpx/openpyxl)
+│   ├── models.py                  # Vehicle, DateRange, TrackPoint, Trip, TrackResult
+│   └── rules.py                   # resolve_date_range, format_for_api, parse_boundary, ...
 │
-├── services/
-│   ├── operational_processor.py
-│   ├── partition_splitter.py
-│   ├── pipeline_processor.py
-│   ├── trackpoints_processor.py
-│   ├── trackpoints_writer.py
-│   └── vehicle_resolver.py
+├── infrastructure/                 # Adaptadores de I/O
+│   ├── fmtrack_client.py          # Cliente HTTP de FM Track
+│   ├── excel_io.py                # Helpers de lectura/normalización de Excel
+│   └── track_record_writer.py     # Escritura incremental por hoja/día
+│
+├── application/                    # Orquestación
+│   ├── vehicle_catalog.py         # PLACA -> Vehicle (catálogo FM Track)
+│   ├── trip_resolver.py           # Resuelve un Trip a sus TrackPoints (con paginación)
+│   ├── track_pipeline.py          # Bucle único: mapear -> resolver -> escribir -> resumen
+│   └── jobs/
+│       ├── fixed_range_job.py     # Un mismo rango de fechas para todo el listado
+│       ├── pipeline_job.py        # Fechas propias por fila
+│       ├── operational_job.py     # Ida/Vuelta + documento limpio -> documento estándar
+│       ├── partition_split_job.py # Divide en N particiones por rango de fecha
+│       └── closest_coordinate_job.py  # [legacy] coordenada más cercana a un timestamp
+│
+├── scripts/                        # Chequeos manuales contra la API real (no son tests)
+│   ├── manual_check_objects.py
+│   └── manual_check_coordinate.py
+│
+├── tests/                          # pytest, sin red (usa un FakeFMTrackClient)
 │
 ├── input/
 │   ├── documento_operacional.xlsx
@@ -86,7 +101,9 @@ ATU_Files/
 │   ├── partitions/
 │   └── trackpoints/
 │
-├── main.py
+├── config.py
+├── logging_config.py
+├── main.py                         # CLI (argparse, un subcomando por job)
 └── README.md
 ```
 
@@ -148,7 +165,7 @@ Este dato se obtiene consultando FM Track utilizando la placa.
 Clase:
 
 ```
-services/operational_processor.py
+application/jobs/operational_job.py
 ```
 
 Responsabilidades:
@@ -189,7 +206,7 @@ Formato:
 Clase:
 
 ```
-services/partition_splitter.py
+application/jobs/partition_split_job.py
 ```
 
 Responsabilidad:
@@ -244,7 +261,7 @@ El `OBJECT_ID` es requerido por FM Track para consultar posiciones.
 Clase:
 
 ```
-services/trackpoints_processor.py
+application/trip_resolver.py
 ```
 
 Responsabilidades:
@@ -312,7 +329,7 @@ Total: 2524 puntos
 Clase:
 
 ```
-services/trackpoints_writer.py
+infrastructure/track_record_writer.py
 ```
 
 Responsabilidad:
@@ -358,36 +375,59 @@ Columnas:
 
 # Ejecución
 
-Ejecutar:
+El CLI expone un subcomando por job (`python main.py <comando> --ayuda` para ver sus argumentos):
 
 ```bash
-python main.py
-```
+# Etapa 1: unir Ida/Vuelta con el documento limpio
+python main.py operational --operational-file input/documento_operacional.xlsx --clean-file input/documento_limpio.xlsx --output output/documento_operacional_procesado.xlsx
 
-Ejemplo de flujo:
+# Etapa 2: particionar el documento procesado
+python main.py partition-split --input output/documento_operacional_procesado.xlsx --output-folder output/partitions --partitions 4
 
-```python
-processor.process(
-    input_file="output/partitions/part_01.xlsx",
-    output_file="output/trackpoints_part_01.xlsx",
-)
+# Etapa 3-5: resolver vehículos + track points por partición (fechas propias por fila)
+python main.py pipeline --input output/partitions/part_01_*.xlsx --output output/trackpoints_part_01.xlsx
+
+# Alternativa: un mismo rango de fechas fijo para todo un listado simple
+python main.py fixed-range --input input/listado.xlsx --output output/trackpoints.xlsx --start "2026-07-06 14:00:00" --end "2026-07-12 22:43:00"
+
+# Legacy: coordenada más cercana a un timestamp por fila
+python main.py closest-coordinate --input input/listado.xlsx --output output/resultado.xlsx
 ```
 
 ---
 
 # Dependencias
 
-Instalar:
+Instalar (runtime):
 
 ```bash
 pip install -r requirements.txt
+```
+
+Instalar (desarrollo, incluye pytest):
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 Principales librerías:
 
 - pandas
 - openpyxl
-- requests
+- httpx
+- python-dotenv
+
+---
+
+# Tests
+
+```bash
+python -m pytest
+```
+
+Los tests en `tests/` no hacen red: usan un `FakeFMTrackClient` (ver `tests/conftest.py`).
+
+Los scripts en `scripts/` sí pegan contra la API real de FM Track y son solo para chequeos manuales (requieren un `.env` válido); no los ejecuta pytest.
 
 ---
 

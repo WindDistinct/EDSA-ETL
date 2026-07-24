@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.workbook.workbook import Workbook as WorkbookType
 
-class TrackPointsWriter:
+from domain.models import TrackPoint, Trip
+
+
+class TrackRecordWriter:
 
     BASE_HEADERS = [
         "RUC_EMPRESA",
@@ -43,7 +47,7 @@ class TrackPointsWriter:
 
         if self.workbook is not None:
             return
-            
+
         self.output_file.parent.mkdir(
             parents=True,
             exist_ok=True,
@@ -70,11 +74,14 @@ class TrackPointsWriter:
         self.sheets[day] = ws
 
         return ws
-    
+
     def close(self):
 
         if self.workbook is None:
             return
+
+        if not self.sheets:
+            self.workbook.create_sheet("SIN_DATOS")
 
         self.workbook.save(
             self.output_file
@@ -83,35 +90,36 @@ class TrackPointsWriter:
         self.workbook.close()
 
         self.workbook = None
-        
+
     def append(
         self,
-        points: list[dict],
+        trip: Trip,
+        points: list[TrackPoint],
     ) -> None:
 
         for point in points:
 
-            day = point["datetime"][:10]
+            day = point.datetime[:10]
 
             sheet = self._get_sheet(day)
 
             row = [
-                point["ruc_empresa"],
-                point["placa"],
-                point["imei"],
-                point["codigo_ruta"],
-                point["fechora_ini_viaje"],
-                point["datetime"],
-                point["latitude"],
-                point["longitude"],
-                point["speed"],
-                point["sentido"],
-                point["nro_doc_conductor"],
+                trip.ruc_empresa,
+                trip.placa,
+                trip.imei,
+                trip.codigo_ruta,
+                trip.date_range.start.isoformat(),
+                point.datetime,
+                point.latitude,
+                point.longitude,
+                point.speed,
+                trip.sentido,
+                trip.nro_doc_conductor,
             ]
 
             if self.include_ignition_status:
                 row.append(
-                    point.get("ignition_status")
+                    point.ignition_status
                 )
 
             sheet.append(row)

@@ -1,22 +1,30 @@
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 
 import pandas as pd
 
+from domain.rules import assign_partition
 
-class PartitionSplitter:
+logger = logging.getLogger(__name__)
 
-    def __init__(
-        self,
-        partitions: int = 4,
-    ):
+
+class PartitionSplitJob:
+    """
+    Divide un documento de tramos grande en N particiones por rango de fecha,
+    cada una con una hoja por día.
+    """
+
+    def __init__(self, partitions: int = 4):
         self.partitions = partitions
 
-    def split(
+    def run(
         self,
         input_file: str,
         output_folder: str,
     ) -> None:
-        
+
         df = pd.read_excel(
             input_file,
             dtype={
@@ -27,51 +35,31 @@ class PartitionSplitter:
                 "NRO_DOC_CONDUCTOR": str,
             },
         )
-        
+
         df["FECHORA_INI_VIAJE"] = pd.to_datetime(
             df["FECHORA_INI_VIAJE"]
         )
-        
+
         start = df["FECHORA_INI_VIAJE"].min()
         end = df["FECHORA_INI_VIAJE"].max()
-        
+
         window = (end - start) / self.partitions
-        
+
         limits = [
             start + window * i
             for i in range(1, self.partitions)
         ]
-        
-        def get_partition(
-            date,
-            limits,
-        ):
 
-            for index, limit in enumerate(limits):
-
-                if date < limit:
-                    return index + 1
-
-            return len(limits) + 1
-        
-        df["PARTITION"] = (
-            df["FECHORA_INI_VIAJE"]
-            .apply(
-                lambda x: get_partition(
-                    x,
-                    limits,
-                )
-            )
+        df["PARTITION"] = df["FECHORA_INI_VIAJE"].apply(
+            lambda dt: assign_partition(dt, limits)
         )
-        
-        output_folder = Path(output_folder)
 
-        output_folder.mkdir(
+        output_path = Path(output_folder)
+
+        output_path.mkdir(
             parents=True,
             exist_ok=True,
         )
-
-        generated = []
 
         for partition, data in df.groupby("PARTITION"):
 
@@ -93,17 +81,14 @@ class PartitionSplitter:
                 f"{end_date}.xlsx"
             )
 
-            file = output_folder / filename
+            file = output_path / filename
 
             with pd.ExcelWriter(
                 file,
                 engine="openpyxl",
             ) as writer:
 
-                data = (
-                    data
-                    .drop(columns=["PARTITION"])
-                )
+                data = data.drop(columns=["PARTITION"])
 
                 data["FECHA"] = (
                     data["FECHORA_INI_VIAJE"]
@@ -120,10 +105,10 @@ class PartitionSplitter:
                         index=False,
                     )
 
-            generated.append(file)
-
-            print(
-                f"Partición {partition:02}: "
-                f"{len(data)} registros "
-                f"({start_date} -> {end_date})"
+            logger.info(
+                "Partición %02d: %d registros (%s -> %s)",
+                partition,
+                len(data),
+                start_date,
+                end_date,
             )
