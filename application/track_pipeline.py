@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import pandas as pd
+from alive_progress import alive_bar
 
 from application.trip_resolver import TripResolver
 from application.vehicle_catalog import VehicleCatalog
@@ -37,7 +38,6 @@ class TrackPipeline:
         *,
         require_ignition_on: bool = False,
         include_ignition_status: bool = True,
-        progress_every: int = 100,
     ):
         self._vehicle_catalog = VehicleCatalog(fmtrack_client)
         self._resolver = TripResolver(
@@ -45,7 +45,6 @@ class TrackPipeline:
             require_ignition_on=require_ignition_on,
         )
         self._include_ignition_status = include_ignition_status
-        self._progress_every = progress_every
 
     def run(
         self,
@@ -72,55 +71,61 @@ class TrackPipeline:
 
         track_points = 0
 
-        for index, row in df.iterrows():
+        with alive_bar(total, title="Procesando tramos") as bar:
 
-            if pd.isna(row["OBJECT_ID"]):
+            for index, row in df.iterrows():
 
-                errors += 1
+                bar.text(f"-> {row.get('PLACA')}")
 
-                logger.error("[ERROR] %s sin OBJECT_ID.", row.get("PLACA"))
+                if pd.isna(row["OBJECT_ID"]):
 
-                continue
+                    errors += 1
 
-            try:
+                    logger.error("[ERROR] %s sin OBJECT_ID.", row.get("PLACA"))
 
-                date_range = date_range_fn(row)
+                    bar()
 
-                trip = build_trip_from_row(
-                    row,
-                    object_id=row["OBJECT_ID"],
-                    date_range=date_range,
-                )
+                    continue
 
-            except Exception as ex:
+                try:
 
-                errors += 1
+                    date_range = date_range_fn(row)
 
-                logger.error("[ERROR] %s -> %s", row.get("PLACA"), ex)
+                    trip = build_trip_from_row(
+                        row,
+                        object_id=row["OBJECT_ID"],
+                        date_range=date_range,
+                    )
 
-                continue
+                except Exception as ex:
 
-            result = self._resolver.resolve(trip)
+                    errors += 1
 
-            if result.success:
+                    logger.error("[ERROR] %s -> %s", row.get("PLACA"), ex)
 
-                if result.points:
+                    bar()
 
-                    writer.append(trip, result.points)
+                    continue
 
-                    track_points += len(result.points)
+                result = self._resolver.resolve(trip)
 
-                processed += 1
+                if result.success:
 
-            else:
+                    if result.points:
 
-                errors += 1
+                        writer.append(trip, result.points)
 
-                logger.error("[ERROR] %s -> %s", trip.placa, result.error)
+                        track_points += len(result.points)
 
-            if (index + 1) % self._progress_every == 0:
+                    processed += 1
 
-                logger.info("Procesados %d/%d", index + 1, total)
+                else:
+
+                    errors += 1
+
+                    logger.error("[ERROR] %s -> %s", trip.placa, result.error)
+
+                bar()
 
         writer.close()
 
