@@ -28,25 +28,23 @@ class VehicleCatalog:
 
     def attach_object_ids(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Agrega la columna OBJECT_ID a partir de PLACA.
+        Agrega la columna OBJECT_ID a partir de PLACA y completa IMEI
+        con el catálogo cuando la fila no trae uno propio.
         """
 
         vehicles = self.build()
 
         df = df.copy()
 
-        df["OBJECT_ID"] = (
-            df["PLACA"]
-            .astype(str)
-            .str.strip()
-            .map(
-                lambda plate:
-                    getattr(
-                        vehicles.get(plate),
-                        "object_id",
-                        None,
-                    )
-            )
+        placas = df["PLACA"].astype(str).str.strip()
+
+        df["OBJECT_ID"] = placas.map(
+            lambda plate:
+                getattr(
+                    vehicles.get(plate),
+                    "object_id",
+                    None,
+                )
         )
 
         missing = (
@@ -56,5 +54,20 @@ class VehicleCatalog:
         )
 
         logger.warning("Vehículos sin OBJECT_ID: %d", missing)
+
+        catalog_imei = placas.map(
+            lambda plate: getattr(vehicles.get(plate), "imei", None) or None
+        )
+
+        if "IMEI" in df.columns:
+            row_imei = (
+                df["IMEI"]
+                .astype(str)
+                .str.strip()
+                .replace({"": None, "nan": None, "None": None})
+            )
+            df["IMEI"] = row_imei.fillna(catalog_imei)
+        else:
+            df["IMEI"] = catalog_imei
 
         return df
