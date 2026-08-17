@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-from application.jobs.operational_job import OperationalJob
 from application.track_pipeline import PipelineSummary, TrackPipeline
 from domain.rules import extract_driver_document, parse_operational_datetime, resolve_date_range
 
@@ -11,21 +10,35 @@ SENTIDO_A_CODIGO = {
     "vuelta": 1,
 }
 
+DISPATCH_OUTPUT_COLUMNS = [
+    "RUC_EMPRESA",
+    "PLACA",
+    "IMEI",
+    "CODIGO_RUTA",
+    "FECHORA_INI_VIAJE",
+    "FECHA_HORA_FIN_TRAMO",
+    "FECHA_HORA_FIN_TRAMO_CALCULADA",
+    "SENTIDO",
+    "NRO_DOC_CONDUCTOR",
+]
 
-class LucaDispatchJob:
+
+class DispatchJob:
     """
-    Reemplaza OperationalJob + PartitionSplitJob + PipelineJob para un cliente
-    LUCA: obtiene el listado de despachos directo de LUCA_Backend (ya no hace
-    falta el documento operacional ni el documento limpio) y resuelve sus
-    coordenadas GPS con el mismo TrackPipeline de siempre.
+    Reemplaza operational/partition-split/pipeline para cualquier cliente: los
+    despachos siempre se obtienen de LUCA_Backend (dispatch_client), y sus
+    coordenadas GPS se resuelven con el proveedor de tracking elegido
+    (track_client: FMTrackClient o LucaClient) mediante el mismo TrackPipeline
+    de siempre.
     """
 
-    def __init__(self, luca_client):
-        self._client = luca_client
+    def __init__(self, dispatch_client, track_client, *, max_workers: int = 8):
+        self._dispatch_client = dispatch_client
         self._pipeline = TrackPipeline(
-            luca_client,
+            track_client,
             require_ignition_on=False,
             include_ignition_status=False,
+            max_workers=max_workers,
         )
 
     def _build_dataframe(self, despachos: list[dict]) -> pd.DataFrame:
@@ -56,7 +69,7 @@ class LucaDispatchJob:
                 }
             )
 
-        return pd.DataFrame(filas, columns=OperationalJob.OUTPUT_COLUMNS, dtype=object)
+        return pd.DataFrame(filas, columns=DISPATCH_OUTPUT_COLUMNS, dtype=object)
 
     def run(
         self,
@@ -65,7 +78,7 @@ class LucaDispatchJob:
         output_file: str,
     ) -> PipelineSummary:
 
-        despachos = self._client.get_dispatch_records(fecha_inicio, fecha_fin)
+        despachos = self._dispatch_client.get_dispatch_records(fecha_inicio, fecha_fin)
 
         df = self._build_dataframe(despachos)
 

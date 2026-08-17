@@ -8,6 +8,7 @@ import httpx
 
 from config import settings
 from domain.models import TrackPoint, Vehicle
+from infrastructure.http_retry import request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,8 @@ class FMTrackClient:
         if params:
             query_params.update(params)
 
-        response = self._client.request(
+        response = request_with_retry(
+            self._client,
             method,
             endpoint,
             params=query_params,

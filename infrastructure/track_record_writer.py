@@ -53,11 +53,7 @@ class TrackRecordWriter:
             exist_ok=True,
         )
 
-        self.workbook = Workbook()
-
-        default = self.workbook.active
-
-        self.workbook.remove(default)
+        self.workbook = Workbook(write_only=True)
 
     def _get_sheet(
         self,

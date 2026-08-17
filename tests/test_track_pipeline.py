@@ -121,3 +121,60 @@ def test_track_pipeline_counts_missing_object_id_as_error(tmp_path):
     assert summary.processed == 0
     assert summary.errors == 1
     assert summary.track_points == 0
+
+
+def test_track_pipeline_resolves_trips_concurrently(tmp_path):
+
+    plates = [f"P{i:03d}" for i in range(20)]
+
+    vehicles = {
+        plate: Vehicle(plate=plate, object_id=f"obj-{plate}", imei="123", credential="default")
+        for plate in plates
+    }
+
+    pages = {
+        f"obj-{plate}": [
+            {
+                "items": [
+                    {
+                        "datetime": "2026-07-06T14:00:00.000Z",
+                        "position": {"latitude": -12.0, "longitude": -77.0, "speed": 10.0},
+                        "ignition_status": "ON",
+                    },
+                ],
+                "continuation_token": None,
+            },
+        ]
+        for plate in plates
+    }
+
+    client = FakeFMTrackClient(objects=vehicles, coordinate_pages=pages)
+
+    df = pd.DataFrame(
+        {
+            "PLACA": plates,
+            "RUC_EMPRESA": ["123"] * len(plates),
+            "IMEI": ["123"] * len(plates),
+            "CODIGO_RUTA": ["R1"] * len(plates),
+            "SENTIDO": ["0"] * len(plates),
+            "NRO_DOC_CONDUCTOR": ["12345678"] * len(plates),
+        }
+    )
+
+    fixed_range = DateRange(
+        start=datetime(2026, 7, 6, 0, 0, 0),
+        end=datetime(2026, 7, 6, 23, 59, 59),
+    )
+
+    pipeline = TrackPipeline(client, include_ignition_status=True, max_workers=8)
+
+    summary = pipeline.run(
+        df,
+        str(tmp_path / "out.xlsx"),
+        date_range_fn=lambda row: fixed_range,
+    )
+
+    assert summary.total == len(plates)
+    assert summary.processed == len(plates)
+    assert summary.errors == 0
+    assert summary.track_points == len(plates)

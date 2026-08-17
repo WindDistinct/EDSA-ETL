@@ -1,11 +1,8 @@
 import argparse
 
 from application.jobs.closest_coordinate_job import ClosestCoordinateJob
+from application.jobs.dispatch_job import DispatchJob
 from application.jobs.fixed_range_job import FixedRangeJob
-from application.jobs.luca_dispatch_job import LucaDispatchJob
-from application.jobs.operational_job import OperationalJob
-from application.jobs.partition_split_job import PartitionSplitJob
-from application.jobs.pipeline_job import PipelineJob
 from infrastructure.fmtrack_client import FMTrackClient
 from infrastructure.luca_client import LucaClient
 from logging_config import configure_logging
@@ -28,6 +25,16 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         "--luca-ruta",
         type=int,
         help="ID de ruta en LUCA (requerido si --provider luca).",
+    )
+
+
+def add_workers_argument(parser: argparse.ArgumentParser) -> None:
+
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="Tramos resueltos en paralelo (default: 8).",
     )
 
 
@@ -57,31 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", required=True)
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
+    add_workers_argument(p)
     add_provider_arguments(p)
-
-    p = sub.add_parser(
-        "pipeline",
-        help="Procesa tramos con fechas propias por fila (ya calculadas por operational/partition-split).",
-    )
-    p.add_argument("--input", required=True)
-    p.add_argument("--output", required=True)
-    add_provider_arguments(p)
-
-    p = sub.add_parser(
-        "operational",
-        help="Une un documento operacional (Ida/Vuelta) con un documento limpio.",
-    )
-    p.add_argument("--operational-file", required=True)
-    p.add_argument("--clean-file", required=True)
-    p.add_argument("--output", required=True)
-
-    p = sub.add_parser(
-        "partition-split",
-        help="Divide un documento de tramos grande en N particiones por rango de fecha.",
-    )
-    p.add_argument("--input", required=True)
-    p.add_argument("--output-folder", required=True)
-    p.add_argument("--partitions", type=int, default=4)
 
     p = sub.add_parser(
         "closest-coordinate",
@@ -94,14 +78,21 @@ def build_parser() -> argparse.ArgumentParser:
     add_provider_arguments(p)
 
     p = sub.add_parser(
-        "luca-despachos",
-        help="Obtiene los despachos de una empresa/ruta de LUCA por rango de fechas y resuelve sus track points (reemplaza operational/partition-split/pipeline para clientes LUCA).",
+        "despachos",
+        help="Obtiene los despachos de una empresa/ruta desde LUCA_Backend por rango de fechas y resuelve sus track points con el proveedor GPS elegido (reemplaza operational/partition-split/pipeline).",
     )
     p.add_argument("--luca-empresa", type=int, required=True)
     p.add_argument("--luca-ruta", type=int, required=True)
     p.add_argument("--start", required=True, help="Fecha inicio (YYYY-MM-DD).")
     p.add_argument("--end", required=True, help="Fecha fin (YYYY-MM-DD).")
     p.add_argument("--output", required=True)
+    p.add_argument(
+        "--provider",
+        choices=["fmtrack", "luca"],
+        default="fmtrack",
+        help="Fuente de datos GPS para resolver los track points (default: fmtrack). Los despachos siempre se obtienen de LUCA_Backend.",
+    )
+    add_workers_argument(p)
 
     return parser
 
@@ -112,31 +103,19 @@ def main(argv: list[str] | None = None) -> None:
 
     args = build_parser().parse_args(argv)
 
-    if args.command == "operational":
-        OperationalJob().run(
-            operational_file=args.operational_file,
-            clean_file=args.clean_file,
-            output_file=args.output,
-        )
-        return
-
-    if args.command == "partition-split":
-        PartitionSplitJob(partitions=args.partitions).run(
-            input_file=args.input,
-            output_folder=args.output_folder,
-        )
-        return
-
-    if args.command == "luca-despachos":
-        client = LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
+    if args.command == "despachos":
+        dispatch_client = LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
+        track_client = dispatch_client if args.provider == "luca" else FMTrackClient()
         try:
-            LucaDispatchJob(client).run(
+            DispatchJob(dispatch_client, track_client, max_workers=args.workers).run(
                 fecha_inicio=args.start,
                 fecha_fin=args.end,
                 output_file=args.output,
             )
         finally:
-            client.close()
+            dispatch_client.close()
+            if track_client is not dispatch_client:
+                track_client.close()
         return
 
     client = build_client(args)
@@ -144,17 +123,11 @@ def main(argv: list[str] | None = None) -> None:
     try:
 
         if args.command == "fixed-range":
-            FixedRangeJob(client).run(
+            FixedRangeJob(client, max_workers=args.workers).run(
                 input_file=args.input,
                 output_file=args.output,
                 start_date=args.start,
                 end_date=args.end,
-            )
-
-        elif args.command == "pipeline":
-            PipelineJob(client).run(
-                input_file=args.input,
-                output_file=args.output,
             )
 
         elif args.command == "closest-coordinate":

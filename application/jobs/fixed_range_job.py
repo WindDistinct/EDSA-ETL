@@ -27,11 +27,12 @@ class FixedRangeJob:
     aplicando un mismo intervalo de fechas fijo a todos los vehículos.
     """
 
-    def __init__(self, fmtrack_client):
+    def __init__(self, fmtrack_client, *, max_workers: int = 8):
         self._pipeline = TrackPipeline(
             fmtrack_client,
             require_ignition_on=False,
             include_ignition_status=True,
+            max_workers=max_workers,
         )
 
     def run(

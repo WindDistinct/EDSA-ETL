@@ -9,6 +9,7 @@ import httpx
 
 from config import settings
 from domain.models import Vehicle
+from infrastructure.http_retry import request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +56,16 @@ class LucaClient:
     def close(self) -> None:
         self._client.close()
 
+    def _post(self, endpoint: str, json: dict[str, Any]) -> httpx.Response:
+        return request_with_retry(self._client, "POST", endpoint, json=json)
+
     def get_objects(self) -> dict[str, Vehicle]:
         """
         Obtiene los IMEI de todos los vehículos de la empresa configurada.
         Retorna un diccionario indexado por placa.
         """
 
-        response = self._client.post(
+        response = self._post(
             "/reportes/obtener_imeis_vehiculos",
             json={"empresa": self._empresa},
         )
@@ -107,7 +111,7 @@ class LucaClient:
 
         for fecha in _local_dates_between(start_dt, end_dt):
 
-            response = self._client.post(
+            response = self._post(
                 "/reportes/generar_reporte_puntos_gps",
                 json={
                     "empresa": self._empresa,
@@ -157,7 +161,7 @@ class LucaClient:
         real/calculada de fin) de la empresa/ruta configurada entre dos fechas.
         """
 
-        response = self._client.post(
+        response = self._post(
             "/reportes/generar_reporte_despachos",
             json={
                 "empresa": self._empresa,
