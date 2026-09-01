@@ -180,7 +180,7 @@ vehículos por placa, no por un ID de dispositivo separado).
 
 ## Endpoints usados (LUCA_Backend, módulo `reportes`, solo requieren `x-api-key`)
 
-- `POST /reportes/obtener_imeis_vehiculos` — `{"empresa": <id>}` → IMEI de todas las placas de esa empresa. Se llama una sola vez por corrida (equivalente a `GET /objects` de FM Track) y alimenta el fallback de IMEI en `VehicleCatalog`.
+- `POST /reportes/obtener_imeis_vehiculos` — `{"empresa": <id>}` → IMEI de todas las placas de esa empresa. Se llama una sola vez por corrida (equivalente a `GET /objects` de FM Track) y alimenta el fallback de IMEI en `VehicleCatalog`. También es el origen del listado de vehículos de `fixed-range` cuando se omite `--input` (no filtra por ruta ni devuelve RUC/nombre de ruta, por eso `FixedRangeJob` completa `CODIGO_RUTA` con el `--luca-ruta` recibido y deja `RUC_EMPRESA` vacío).
 - `POST /reportes/generar_reporte_puntos_gps` — `{"empresa": <id>, "ruta": <id>, "placa": "...", "fecha": "YYYY-MM-DD"}` → puntos GPS continuos (`latitude`, `longitude`, `speed`, `timestamp_ms`) de esa placa en ese día calendario (hora Lima), ordenados. `LucaClient` llama este endpoint una vez por cada día distinto que toque el rango del tramo y combina los resultados. Solo se usa cuando `track_client` es `LucaClient` (`--provider luca`).
 - `POST /reportes/generar_reporte_despachos` — `{"empresa": <id>, "ruta": <id>, "fecha_inicio": "YYYY-MM-DD", "fecha_fin": "YYYY-MM-DD"}` → listado plano de despachos (placa, hora, conductor, sentido, hora real/calculada del último punto) de esa empresa/ruta en el rango. Es el origen de despachos del comando `despachos`, sin importar el `--provider` elegido para el GPS.
 
@@ -341,22 +341,36 @@ Antes de correrlo, confirmar en `.env` que `LUCA_BASE_URL` apunta al backend cor
 
 ## Otros comandos
 
-`fixed-range` y `closest-coordinate` no dependen de despachos de LUCA — trabajan sobre un Excel simple
-(`RUC/CODIGO_RUTA/PLACA/IMEI`) y aceptan el mismo selector de proveedor GPS:
+`closest-coordinate` no depende de despachos de LUCA — trabaja sobre un Excel simple
+(`RUC/CODIGO_RUTA/PLACA/IMEI`) y acepta el mismo selector de proveedor GPS.
 
-| Flag             | Default   | Descripción                                                 |
-| ---------------- | --------- | ------------------------------------------------------------ |
-| `--provider`     | `fmtrack` | Fuente de datos GPS: `fmtrack` o `luca`.                     |
-| `--luca-empresa` | —         | ID de empresa en LUCA. **Requerido** si `--provider luca`.  |
-| `--luca-ruta`    | —         | ID de ruta en LUCA. **Requerido** si `--provider luca`.     |
-| `--workers`      | `8`       | Tramos resueltos en paralelo (solo `fixed-range`).           |
+`fixed-range` aplica un mismo rango de fechas fijo a un listado de vehículos, y admite dos orígenes
+para ese listado:
+
+- **Excel** (`--input`): el modo original, un Excel simple `RUC/CODIGO_RUTA/PLACA/IMEI`.
+- **LUCA** (sin `--input`): igual que `despachos`, separa el origen del listado (siempre `LucaClient`,
+  vía `/reportes/obtener_imeis_vehiculos` con `--luca-empresa`) del proveedor de tracking (`--provider`,
+  `FMTrackClient` o `LucaClient`). Ese endpoint no filtra por ruta ni devuelve `RUC_EMPRESA`/nombre de
+  ruta, así que `CODIGO_RUTA` se completa con el propio `--luca-ruta` en todas las filas y
+  `RUC_EMPRESA` queda vacío.
+
+| Flag             | Default   | Descripción                                                                 |
+| ---------------- | --------- | ---------------------------------------------------------------------------- |
+| `--input`        | —         | Excel simple. Si se omite, el listado se obtiene de LUCA (requiere los dos flags de abajo). |
+| `--provider`     | `fmtrack` | Proveedor de GPS para resolver los track points: `fmtrack` o `luca`.        |
+| `--luca-empresa` | —         | ID de empresa en LUCA. Requerido si `--provider luca`, o siempre que se omita `--input`. |
+| `--luca-ruta`    | —         | ID de ruta en LUCA. Requerido si `--provider luca`, o siempre que se omita `--input`. |
+| `--workers`      | `8`       | Tramos resueltos en paralelo (solo `fixed-range`).                            |
 
 ```bash
 # Un mismo rango de fechas fijo para todo un listado simple (FM Track)
 python main.py fixed-range --input input/listado.xlsx --output output/trackpoints.xlsx --start "2026-07-06 14:00:00" --end "2026-07-12 22:43:00"
 
-# Lo mismo con LUCA
+# Lo mismo con el Excel, pero resolviendo el GPS desde LUCA
 python main.py fixed-range --input input/listado.xlsx --output output/trackpoints.xlsx --start "2026-07-06 14:00:00" --end "2026-07-12 22:43:00" --provider luca --luca-empresa 10 --luca-ruta 6
+
+# Sin Excel: listado de vehículos directo de LUCA (empresa/ruta), tracking por FM Track (default)
+python main.py fixed-range --output output/trackpoints.xlsx --start "2026-07-06 14:00:00" --end "2026-07-12 22:43:00" --luca-empresa 10 --luca-ruta 6
 
 # Legacy: coordenada más cercana a un timestamp por fila
 python main.py closest-coordinate --input input/listado.xlsx --output output/resultado.xlsx

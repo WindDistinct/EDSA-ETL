@@ -58,9 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "fixed-range",
-        help="Aplica un mismo rango de fechas a un listado simple (RUC/CODIGO_RUTA/PLACA/IMEI).",
+        help=(
+            "Aplica un mismo rango de fechas a un listado de vehículos: un Excel simple "
+            "(--input) o, sin --input, el listado de vehículos de --luca-empresa/--luca-ruta."
+        ),
     )
-    p.add_argument("--input", required=True)
+    p.add_argument(
+        "--input",
+        help="Excel simple (RUC/CODIGO_RUTA/PLACA/IMEI). Si se omite, se requieren --luca-empresa y --luca-ruta.",
+    )
     p.add_argument("--output", required=True)
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
@@ -115,6 +121,33 @@ def main(argv: list[str] | None = None) -> None:
         finally:
             dispatch_client.close()
             if track_client is not dispatch_client:
+                track_client.close()
+        return
+
+    if args.command == "fixed-range" and not args.input:
+
+        if args.luca_empresa is None or args.luca_ruta is None:
+            raise SystemExit(
+                "--luca-empresa y --luca-ruta son requeridos cuando no se usa --input."
+            )
+
+        vehicle_source_client = LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
+        track_client = vehicle_source_client if args.provider == "luca" else FMTrackClient()
+
+        try:
+            FixedRangeJob(
+                track_client,
+                vehicle_source_client=vehicle_source_client,
+                max_workers=args.workers,
+            ).run(
+                output_file=args.output,
+                start_date=args.start,
+                end_date=args.end,
+                codigo_ruta=args.luca_ruta,
+            )
+        finally:
+            vehicle_source_client.close()
+            if track_client is not vehicle_source_client:
                 track_client.close()
         return
 
