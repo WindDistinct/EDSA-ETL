@@ -24,6 +24,7 @@ class PipelineSummary:
     errors: int
     track_points: int
     output_file: str
+    csv_file: str | None = None
 
 
 class TrackPipeline:
@@ -156,13 +157,16 @@ class TrackPipeline:
 
         writer.close()
 
+        csv_file = str(writer.csv_file) if writer.csv_file is not None else None
+
         logger.info(
-            "RESUMEN | leidos=%d procesados=%d errores=%d track_points=%d archivo=%s",
+            "RESUMEN | leidos=%d procesados=%d errores=%d track_points=%d archivo=%s csv=%s",
             total,
             processed,
             errors,
             track_points,
             output_file,
+            csv_file,
         )
 
         return PipelineSummary(
@@ -171,4 +175,5 @@ class TrackPipeline:
             errors=errors,
             track_points=track_points,
             output_file=output_file,
+            csv_file=csv_file,
         )
