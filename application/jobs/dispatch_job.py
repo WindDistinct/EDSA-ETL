@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pandas as pd
 
 from application.track_pipeline import PipelineSummary, TrackPipeline
-from domain.rules import extract_driver_document, parse_operational_datetime, resolve_date_range
+from domain.models import DateRange
+from domain.rules import (
+    extract_driver_document,
+    parse_boundary,
+    parse_operational_datetime,
+    resolve_date_range,
+)
 
 SENTIDO_A_CODIGO = {
     "ida": 0,
@@ -78,12 +86,48 @@ class DispatchJob:
         output_file: str,
     ) -> PipelineSummary:
 
-        despachos = self._dispatch_client.get_dispatch_records(fecha_inicio, fecha_fin)
+        # El rango filtra la hora de los track points, no la de salida: cada
+        # tramo se consulta solo en su intersección con [start, end]. LUCA
+        # filtra despachos por día calendario, así que se pide también el día
+        # anterior para no perder tramos que cruzan la medianoche hacia el rango.
+        window = DateRange(
+            start=parse_boundary(fecha_inicio, is_end=False),
+            end=parse_boundary(fecha_fin, is_end=True),
+        )
+
+        despachos = self._dispatch_client.get_dispatch_records(
+            (window.start.date() - timedelta(days=1)).isoformat(),
+            window.end.date().isoformat(),
+        )
 
         df = self._build_dataframe(despachos)
+
+        df = df.loc[[_overlaps(row, window) for _, row in df.iterrows()]]
 
         return self._pipeline.run(
             df,
             output_file,
-            date_range_fn=resolve_date_range,
+            date_range_fn=lambda row: _clip_to_window(resolve_date_range(row), window),
         )
+
+
+def _clip_to_window(date_range: DateRange, window: DateRange) -> DateRange:
+    return DateRange(
+        start=max(date_range.start, window.start),
+        end=min(date_range.end, window.end),
+    )
+
+
+def _overlaps(row: pd.Series, window: DateRange) -> bool:
+    """
+    True si el tramo tiene track points posibles dentro de la ventana. Los
+    tramos sin rango válido se conservan para que el pipeline los reporte
+    como error, igual que antes.
+    """
+
+    try:
+        date_range = resolve_date_range(row)
+    except ValueError:
+        return True
+
+    return date_range.start <= window.end and date_range.end >= window.start

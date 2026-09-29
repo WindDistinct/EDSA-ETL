@@ -68,8 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Excel simple (RUC/CODIGO_RUTA/PLACA/IMEI). Si se omite, se requieren --luca-empresa y --luca-ruta.",
     )
     p.add_argument("--output", required=True)
-    p.add_argument("--start", required=True)
-    p.add_argument("--end", required=True)
+    p.add_argument("--start", required=True, help="Inicio del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\").")
+    p.add_argument("--end", required=True, help="Fin del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\"; solo fecha = hasta 23:59:59).")
     add_workers_argument(p)
     add_provider_arguments(p)
 
@@ -89,8 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--luca-empresa", type=int, required=True)
     p.add_argument("--luca-ruta", type=int, required=True)
-    p.add_argument("--start", required=True, help="Fecha inicio (YYYY-MM-DD).")
-    p.add_argument("--end", required=True, help="Fecha fin (YYYY-MM-DD).")
+    p.add_argument("--start", required=True, help="Inicio del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\"). Filtra la hora de los track points.")
+    p.add_argument("--end", required=True, help="Fin del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\"; solo fecha = hasta 23:59:59).")
     p.add_argument("--output", required=True)
     p.add_argument(
         "--provider",

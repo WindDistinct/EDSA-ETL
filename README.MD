@@ -323,8 +323,8 @@ el mismo `TrackPipeline` de siempre. Clase: `application/jobs/dispatch_job.py` (
 | ---------------- | --------- | --------------------------------------------------------------------- |
 | `--luca-empresa` | —         | ID de empresa en LUCA. **Siempre requerido** (origen de despachos).  |
 | `--luca-ruta`    | —         | ID de ruta en LUCA. **Siempre requerido** (origen de despachos).     |
-| `--start`        | —         | Fecha inicio del rango (`YYYY-MM-DD`).                                |
-| `--end`          | —         | Fecha fin del rango (`YYYY-MM-DD`).                                   |
+| `--start`        | —         | Inicio del rango: `YYYY-MM-DD` o `"YYYY-MM-DD HH:MM[:SS]"`.           |
+| `--end`          | —         | Fin del rango: `YYYY-MM-DD` (hasta 23:59:59) o `"YYYY-MM-DD HH:MM[:SS]"`. |
 | `--output`       | —         | Excel de salida.                                                       |
 | `--provider`     | `fmtrack` | Proveedor de GPS para resolver los track points: `fmtrack` o `luca`.  |
 | `--workers`      | `8`       | Tramos resueltos en paralelo.                                          |
@@ -335,7 +335,16 @@ python main.py despachos --luca-empresa 10 --luca-ruta 6 --start 2026-08-01 --en
 
 # Lo mismo, pero resolviendo el GPS también desde LUCA_Backend
 python main.py despachos --luca-empresa 10 --luca-ruta 6 --start 2026-08-01 --end 2026-08-07 --output output/trackpoints.xlsx --provider luca
+
+# Solo los track points entre las 06:00 y las 12:00 del 1 de agosto
+python main.py despachos --luca-empresa 10 --luca-ruta 6 --start "2026-08-01 06:00" --end "2026-08-01 12:00" --output output/trackpoints.xlsx
 ```
+
+El rango filtra la hora de los **track points**, no la de salida del despacho: cada tramo se consulta
+solo en su intersección con `[--start, --end]`, y los tramos que no se cruzan con el rango se descartan
+antes de consultar el GPS. `FECHORA_INI_VIAJE` en la salida sigue siendo la hora real de salida. Como
+LUCA_Backend filtra despachos por día calendario, se piden desde el día anterior a `--start` para no perder
+tramos que cruzan la medianoche hacia el rango.
 
 Antes de correrlo, confirmar en `.env` que `LUCA_BASE_URL` apunta al backend correcto (ej. `http://127.0.0.1:5000/` si LUCA_Backend corre local) y que `LUCA_API_KEY` coincide con el `API_KEY_BACKEND` vigente en el `.env` de LUCA_Backend — si cambian uno de los dos y no el otro, falla con `API Key inválida`.
 

@@ -41,6 +41,9 @@ class Trip:
     nro_doc_conductor: str | None
     object_id: str
     date_range: DateRange
+    # Hora real de salida del despacho, cuando date_range fue recortado a una
+    # ventana y ya no empieza en la salida. None = usar date_range.start.
+    fechora_ini_viaje: datetime | None = None
 
 
 @dataclass(frozen=True)

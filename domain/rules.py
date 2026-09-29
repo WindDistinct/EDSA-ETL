@@ -85,6 +85,7 @@ def build_trip_from_row(
         nro_doc_conductor=row.get("NRO_DOC_CONDUCTOR"),
         object_id=object_id,
         date_range=date_range,
+        fechora_ini_viaje=_resolve_datetime(row.get("FECHORA_INI_VIAJE")),
     )
 
 

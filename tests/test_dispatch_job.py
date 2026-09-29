@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from openpyxl import load_workbook
 
 from application.jobs.dispatch_job import DispatchJob
 from domain.models import Vehicle
+from domain.rules import format_for_api
 from tests.conftest import FakeFMTrackClient
 
 
@@ -70,7 +73,7 @@ def test_dispatch_job_uses_dispatch_client_for_despachos_and_track_client_for_gp
         output_file=str(output_file),
     )
 
-    assert dispatch_client.calls == [("2026-07-01", "2026-07-10")]
+    assert dispatch_client.calls == [("2026-06-30", "2026-07-10")]
     assert summary.processed == 1
     assert summary.track_points == 1
 
@@ -121,3 +124,82 @@ def test_dispatch_job_works_when_dispatch_and_track_client_are_the_same_object(t
 
     assert summary.processed == 1
     assert summary.track_points == 1
+
+
+
+class RecordingTrackClient(FakeFMTrackClient):
+    """
+    Registra el rango consultado por cada object_id.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.ranges: dict[str, tuple[str, str]] = {}
+
+    def get_object_coordinates(self, *, object_id, from_datetime, to_datetime, **kwargs):
+        self.ranges[object_id] = (from_datetime, to_datetime)
+        return super().get_object_coordinates(
+            object_id=object_id,
+            from_datetime=from_datetime,
+            to_datetime=to_datetime,
+            **kwargs,
+        )
+
+
+def test_dispatch_job_clips_track_range_to_window_and_skips_trips_outside(tmp_path):
+
+    vehicles = {
+        placa: Vehicle(plate=placa, object_id=placa, imei="", credential="default")
+        for placa in ("DENTRO", "FUERA")
+    }
+
+    pages = {
+        "DENTRO": [
+            {
+                "items": [
+                    {
+                        "datetime": "2026-07-06T15:00:00.000Z",
+                        "position": {"latitude": -12.0, "longitude": -77.0, "speed": 10.0},
+                    },
+                ],
+                "continuation_token": None,
+            },
+        ]
+    }
+
+    # 08:00 -> 14:00: se cruza con la ventana 10:00 -> 12:00
+    dentro = {**DESPACHO, "placa": "DENTRO"}
+
+    # 15:30 -> 18:00: no tiene track points dentro de la ventana
+    fuera = {
+        **DESPACHO,
+        "placa": "FUERA",
+        "hora": "15:30:00",
+        "hora_real_ultimo_punto": "Mon Jul 06 2026 18:00:00 GMT-0500 (hora estándar de Perú)",
+    }
+
+    dispatch_client = FakeDispatchClient([dentro, fuera])
+    track_client = RecordingTrackClient(objects=vehicles, coordinate_pages=pages)
+
+    output_file = tmp_path / "out.xlsx"
+
+    summary = DispatchJob(dispatch_client, track_client).run(
+        fecha_inicio="2026-07-06 10:00",
+        fecha_fin="2026-07-06 12:00",
+        output_file=str(output_file),
+    )
+
+    assert dispatch_client.calls == [("2026-07-05", "2026-07-06")]
+    assert summary.total == 1
+    assert summary.processed == 1
+    assert list(track_client.ranges) == ["DENTRO"]
+
+    from_dt, to_dt = track_client.ranges["DENTRO"]
+
+    assert format_for_api(datetime(2026, 7, 6, 10, 0)) == from_dt
+    assert format_for_api(datetime(2026, 7, 6, 12, 0)) == to_dt
+
+    sheet = load_workbook(output_file)["2026-07-06"]
+
+    # FECHORA_INI_VIAJE sigue siendo la salida real, no el inicio de la ventana
+    assert "08:00" in str(sheet.cell(row=2, column=5).value)

@@ -175,7 +175,7 @@ class TrackRecordWriter:
         points: list[TrackPoint],
     ) -> None:
 
-        fechora_ini = _as_datetime_text(trip.date_range.start)
+        fechora_ini = _as_datetime_text(trip.fechora_ini_viaje or trip.date_range.start)
 
         for point in points:
 
