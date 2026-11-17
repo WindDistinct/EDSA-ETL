@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from domain.models import DateRange, TrackPoint, TrackResult, Trip
+from domain.models import DateRange, Sentido, TrackPoint, TrackResult, Trip, TripStatus
 
 
 def test_date_range_rejects_end_before_start():
@@ -71,3 +71,39 @@ def test_track_result_failure_when_error_set():
     )
 
     assert result.success is False
+
+
+# Sentido
+
+
+@pytest.mark.parametrize("valor", ["IDA", "ida", " Ida ", "I", "i", 0, "0"])
+def test_sentido_parse_ida(valor):
+
+    assert Sentido.parse(valor) is Sentido.IDA
+
+
+@pytest.mark.parametrize("valor", ["VUELTA", "vuelta", "V", 1, "1"])
+def test_sentido_parse_vuelta(valor):
+
+    assert Sentido.parse(valor) is Sentido.VUELTA
+
+
+def test_sentido_representaciones():
+
+    assert (Sentido.IDA.codigo, Sentido.IDA.letra) == (0, "I")
+    assert (Sentido.VUELTA.codigo, Sentido.VUELTA.letra) == (1, "V")
+
+
+@pytest.mark.parametrize("valor", [None, "", "X", 2, "IDA Y VUELTA"])
+def test_sentido_invalido(valor):
+
+    with pytest.raises(ValueError):
+        Sentido.parse(valor)
+
+    assert Sentido.try_parse(valor) is None
+
+
+def test_trip_status_se_escribe_como_texto():
+
+    assert str(TripStatus.SIN_PUNTOS) == "sin_puntos"
+    assert f"{TripStatus.OK}" == "ok"

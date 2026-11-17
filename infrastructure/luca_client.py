@@ -3,17 +3,15 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import httpx
 
 from config import settings
 from domain.models import Vehicle
+from domain.tiempo import LOCAL_TZ
 from infrastructure.http_retry import RateGate, request_with_retry
 
 logger = logging.getLogger(__name__)
-
-LOCAL_TZ = ZoneInfo("America/Lima")
 
 
 def _parse_utc(value: str) -> datetime:

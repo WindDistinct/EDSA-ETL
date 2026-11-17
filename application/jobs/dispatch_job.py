@@ -5,18 +5,13 @@ from datetime import timedelta
 import pandas as pd
 
 from application.track_pipeline import PipelineSummary, TrackPipeline
-from domain.models import DateRange
+from domain.models import DateRange, Sentido
 from domain.rules import (
     extract_driver_document,
     parse_boundary,
     parse_operational_datetime,
     resolve_date_range,
 )
-
-SENTIDO_A_CODIGO = {
-    "ida": 0,
-    "vuelta": 1,
-}
 
 DISPATCH_OUTPUT_COLUMNS = [
     "RUC_EMPRESA",
@@ -70,7 +65,7 @@ class DispatchJob:
                     "FECHA_HORA_FIN_TRAMO_CALCULADA": parse_operational_datetime(
                         despacho.get("hora_calculada_ultimo_punto")
                     ),
-                    "SENTIDO": SENTIDO_A_CODIGO.get(despacho.get("sentido")),
+                    "SENTIDO": _codigo_sentido(despacho.get("sentido")),
                     "NRO_DOC_CONDUCTOR": extract_driver_document(
                         despacho.get("conductor")
                     ),
@@ -109,6 +104,11 @@ class DispatchJob:
             output_file,
             date_range_fn=lambda row: _clip_to_window(resolve_date_range(row), window),
         )
+
+
+def _codigo_sentido(value) -> int | None:
+    sentido = Sentido.try_parse(value)
+    return sentido.codigo if sentido else None
 
 
 def _clip_to_window(date_range: DateRange, window: DateRange) -> DateRange:

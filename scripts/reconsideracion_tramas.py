@@ -39,15 +39,14 @@ from alive_progress import alive_bar
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from application.trip_resolver import TripResolver  # noqa: E402
-from domain.models import DateRange, TrackResult, Trip  # noqa: E402
-from domain.rules import LOCAL_TZ  # noqa: E402
+from domain.models import DateRange, Sentido, TrackResult, Trip, TripStatus  # noqa: E402
+from domain.tiempo import LOCAL_TZ  # noqa: E402
 from infrastructure.fmtrack_client import FMTrackClient  # noqa: E402
 from logging_config import configure_logging  # noqa: E402
 
 logger = logging.getLogger("reconsideracion_tramas")
 
 HEADER = ["latitud", "longitud", "timestamp", "velocidad", "sentido"]
-SENTIDOS = {"IDA": "I", "VUELTA": "V"}
 FECHA_FMT = "%d/%m/%Y %H:%M:%S"
 
 
@@ -125,24 +124,24 @@ def main() -> int:
 
         existente = _ya_generado(out_dir, n, placa)
         if existente:
-            resumen.append({**base, "ESTADO": "existente", "ARCHIVO": existente.name})
+            resumen.append({**base, "ESTADO": TripStatus.EXISTENTE, "ARCHIVO": existente.name})
             continue
 
-        sentido = SENTIDOS.get(str(row["Sentido"]).strip().upper())
+        sentido = Sentido.try_parse(row["Sentido"])
         try:
             inicio = _parse_fecha(row["H. Inicio"]).replace(tzinfo=LOCAL_TZ)
             fin = _parse_fecha(row["H. Fin"]).replace(tzinfo=LOCAL_TZ)
             rango = DateRange(start=inicio, end=fin)
         except Exception as ex:
-            resumen.append({**base, "ESTADO": "fila_invalida", "DETALLE": str(ex)})
+            resumen.append({**base, "ESTADO": TripStatus.FILA_INVALIDA, "DETALLE": str(ex)})
             continue
         if sentido is None:
-            resumen.append({**base, "ESTADO": "fila_invalida", "DETALLE": f"Sentido '{row['Sentido']}'"})
+            resumen.append({**base, "ESTADO": TripStatus.FILA_INVALIDA, "DETALLE": f"Sentido '{row['Sentido']}'"})
             continue
 
         vehicle = vehicles.get(placa)
         if vehicle is None:
-            resumen.append({**base, "ESTADO": "sin_object_id", "DETALLE": "Placa no encontrada en FM Track"})
+            resumen.append({**base, "ESTADO": TripStatus.SIN_OBJECT_ID, "DETALLE": "Placa no encontrada en FM Track"})
             continue
 
         trip = Trip(
@@ -150,12 +149,12 @@ def main() -> int:
             placa=placa,
             imei=vehicle.imei,
             codigo_ruta=row.get("Ruta"),
-            sentido=sentido,
+            sentido=sentido.letra,
             nro_doc_conductor=None,
             object_id=vehicle.object_id,
             date_range=rango,
         )
-        pendientes.append((n, placa, sentido, trip, base))
+        pendientes.append((n, placa, sentido.letra, trip, base))
 
     try:
         with ThreadPoolExecutor(max_workers=args.workers) as pool, alive_bar(len(pendientes)) as bar:
@@ -164,12 +163,12 @@ def main() -> int:
                 n, placa, sentido, _, base = futures[fut]
                 result = fut.result()
                 if not result.success:
-                    resumen.append({**base, "ESTADO": "error", "DETALLE": result.error})
+                    resumen.append({**base, "ESTADO": TripStatus.ERROR, "DETALLE": result.error})
                 elif not result.points:
-                    resumen.append({**base, "ESTADO": "sin_puntos"})
+                    resumen.append({**base, "ESTADO": TripStatus.SIN_PUNTOS})
                 else:
                     path = _escribir(out_dir, n, placa, sentido, result)
-                    resumen.append({**base, "ESTADO": "ok", "PUNTOS": len(result.points), "ARCHIVO": path.name})
+                    resumen.append({**base, "ESTADO": TripStatus.OK, "PUNTOS": len(result.points), "ARCHIVO": path.name})
                 bar()
     finally:
         client.close()

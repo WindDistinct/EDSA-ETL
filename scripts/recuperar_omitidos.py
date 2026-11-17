@@ -29,12 +29,15 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-from despachos_tramas import COLUMNS, DATE_FMT, clean_doc, cruzar, load_despachos, load_tramas, parse_hora, write_resultado
+from despachos_tramas import COLUMNS, DATE_FMT, cruzar, load_despachos, load_tramas, write_resultado
+
+from domain.horas import MAX_DURACION_VIAJE, RECORTE_VIAJE, combinar, cruzar_medianoche, normalizar_dni, parse_hora
+from domain.models import Sentido
 
 COL_HORA = "HORA SENTIDO (original)"
 COL_LLEG = "LLEG. (original)"
-MAX_DURACION = pd.Timedelta(hours=6)
-RECORTE = pd.Timedelta(hours=2)
+MAX_DURACION = pd.Timedelta(MAX_DURACION_VIAJE)
+RECORTE = pd.Timedelta(RECORTE_VIAJE)
 
 
 def load_correcciones(path: Path) -> list[dict]:
@@ -81,14 +84,17 @@ def armar_despachos(
             descartados.append({**base, "MOTIVO": "hora invalida"})
             continue
 
-        fecha = pd.Timestamp(d["FECHA"]).normalize()
-        ini = fecha + pd.Timedelta(hours=hora_ini.hour, minutes=hora_ini.minute, seconds=hora_ini.second)
-        fin = fecha + pd.Timedelta(hours=hora_fin.hour, minutes=hora_fin.minute, seconds=hora_fin.second)
+        sentido = Sentido.try_parse(d["SENTIDO"])
+        if sentido is None:
+            descartados.append({**base, "MOTIVO": f"SENTIDO {d['SENTIDO']!r} no es IDA/VUELTA"})
+            continue
+
+        ini = pd.Timestamp(combinar(pd.Timestamp(d["FECHA"]), hora_ini))
+        fin = pd.Timestamp(combinar(pd.Timestamp(d["FECHA"]), hora_fin))
         if fin == ini:
             descartados.append({**base, "MOTIVO": "sigue con salida igual a llegada"})
             continue
-        if fin < ini:
-            fin += pd.Timedelta(days=1)
+        fin, _ = cruzar_medianoche(ini, fin)
 
         placa = base["PLACA"]
         otros = validos[(validos["PLACA"] == placa) & (validos["INI"] < fin) & (validos["FIN"] > ini)]
@@ -102,8 +108,8 @@ def armar_despachos(
                 "CODIGO_RUTA": d["CODIGO_RUTA"],
                 "INI": ini,
                 "FIN": fin,
-                "SENTIDO": 0 if str(d["SENTIDO"]).strip().upper() == "IDA" else 1,
-                "NRO_DOC_CONDUCTOR": clean_doc(d["NRO_DOC_CONDUCTOR"]),
+                "SENTIDO": sentido.codigo,
+                "NRO_DOC_CONDUCTOR": normalizar_dni(d["NRO_DOC_CONDUCTOR"]),
                 "DURACION": str(fin - ini).replace("0 days ", ""),
                 "AVISO": ("duracion mayor a 6h; " if fin - ini > MAX_DURACION else "")
                 + (f"se solapa con {', '.join(avisos)}" if avisos else ""),

@@ -3,11 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from domain.models import DateRange, Trip
-
-LOCAL_TZ = ZoneInfo("America/Lima")
+from domain.tiempo import LOCAL_TZ, to_local
 
 
 def _resolve_datetime(value: Any) -> datetime | None:
@@ -91,22 +89,12 @@ def build_trip_from_row(
 
 def format_for_api(value: datetime) -> str:
     """
-    Convierte un datetime al formato ISO 8601 esperado por FM Track.
+    Convierte un datetime al formato ISO 8601 que esperan las APIs, con el
+    offset de Lima. Un datetime sin zona horaria se interpreta como hora de
+    Lima (no como la zona del equipo).
     """
 
-    if hasattr(value, "to_pydatetime"):
-        value = value.to_pydatetime()
-
-    return (
-        value.astimezone()
-        .isoformat(
-            timespec="milliseconds"
-        )
-        .replace(
-            "+00:00",
-            "Z",
-        )
-    )
+    return to_local(value).isoformat(timespec="milliseconds")
 
 
 def to_local_isoformat(value: str) -> str:
@@ -163,19 +151,6 @@ def parse_boundary(value: str, *, is_end: bool) -> datetime:
         )
 
     return parsed
-
-
-def assign_partition(dt: datetime, limits: list[datetime]) -> int:
-    """
-    Determina a qué partición pertenece una fecha, dado una lista de límites.
-    """
-
-    for index, limit in enumerate(limits):
-
-        if dt < limit:
-            return index + 1
-
-    return len(limits) + 1
 
 
 def parse_operational_datetime(value: str | None) -> datetime | None:

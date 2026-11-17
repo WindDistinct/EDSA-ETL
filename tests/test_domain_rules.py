@@ -1,9 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from domain.rules import (
-    assign_partition,
     extract_driver_document,
     format_for_api,
     parse_boundary,
@@ -115,29 +114,6 @@ def test_parse_boundary_start_date_only_stays_midnight():
     assert result == datetime(2026, 7, 6, 0, 0, 0)
 
 
-# assign_partition
-
-def test_assign_partition_before_first_limit():
-
-    limits = [datetime(2026, 1, 10), datetime(2026, 1, 20)]
-
-    assert assign_partition(datetime(2026, 1, 5), limits) == 1
-
-
-def test_assign_partition_after_last_limit():
-
-    limits = [datetime(2026, 1, 10), datetime(2026, 1, 20)]
-
-    assert assign_partition(datetime(2026, 1, 25), limits) == 3
-
-
-def test_assign_partition_at_boundary_goes_to_next_partition():
-
-    limits = [datetime(2026, 1, 10), datetime(2026, 1, 20)]
-
-    assert assign_partition(datetime(2026, 1, 10), limits) == 2
-
-
 # extract_driver_document
 
 def test_extract_driver_document_no_comma():
@@ -188,3 +164,15 @@ def test_parse_operational_datetime_unparsable_returns_none():
 def test_parse_operational_datetime_none_returns_none():
 
     assert parse_operational_datetime(None) is None
+
+
+def test_format_for_api_naive_se_interpreta_como_lima():
+
+    assert format_for_api(datetime(2026, 7, 6, 14, 0)) == "2026-07-06T14:00:00.000-05:00"
+
+
+def test_format_for_api_convierte_utc_a_lima():
+
+    value = datetime(2026, 7, 6, 19, 0, tzinfo=timezone.utc)
+
+    assert format_for_api(value) == "2026-07-06T14:00:00.000-05:00"

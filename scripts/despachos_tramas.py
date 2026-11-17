@@ -38,14 +38,17 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import re
 import sys
 from pathlib import Path
 
 import numpy as np
 import openpyxl
 import pandas as pd
-from openpyxl.utils.datetime import to_excel
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from domain.horas import DURACION_CORTA, combinar, cruzar_medianoche, normalizar_dni, parse_hora, recortar_fin  # noqa: E402
+from domain.models import Sentido  # noqa: E402
 
 COLUMNS = [
     "RUC_EMPRESA",
@@ -61,45 +64,6 @@ COLUMNS = [
     "NRO_DOC_CONDUCTOR",
 ]
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
-DURACION_CORTA = pd.Timedelta(minutes=15)
-
-# "12:.04", "22::21", "19;45", "22:_53", "4:19am", "09:11:00"
-TIME_TEXT_RE = re.compile(r"^\s*(\d{1,2})\s*[:;.,_]+\s*(\d{2})(?::\d{2})?\s*(am|pm)?\s*$", re.IGNORECASE)
-
-
-def parse_hora(value) -> tuple[dt.time | None, str]:
-    """Devuelve (hora, nota). hora=None si no se puede usar; nota != "" si se corrigio."""
-    if value is None:
-        return None, ""
-    if isinstance(value, dt.datetime):
-        serial = to_excel(value)
-        if serial < 24:
-            # Se escribio "9.31" en vez de "9:31" y Excel lo guardo como numero.
-            hh = int(serial)
-            mm = round((serial - hh) * 100)
-            if mm < 60:
-                return dt.time(hh, mm), f"numero {serial:.2f} leido como {hh:02d}:{mm:02d}"
-        elif serial == int(serial) and 100 <= serial <= 2359 and serial % 100 < 60:
-            # Se escribio "836" sin separador.
-            hh, mm = divmod(int(serial), 100)
-            return dt.time(hh, mm), f"numero {int(serial)} leido como {hh:02d}:{mm:02d}"
-        elif value.year >= 2000 and value.time() == dt.time(0) and value.day <= 23 and value.month < 60:
-            # Se escribio "16.04" y Excel lo convirtio en la fecha 16/04.
-            hh, mm = value.day, value.month
-            return dt.time(hh, mm), f"fecha {value:%d/%m/%Y} leida como {hh:02d}:{mm:02d}"
-        return None, ""
-    if isinstance(value, dt.time):
-        return value, ""
-    if isinstance(value, str):
-        m = TIME_TEXT_RE.match(value)
-        if m:
-            hh, mm = int(m.group(1)), int(m.group(2))
-            if m.group(3) and m.group(3).lower() == "pm" and hh < 12:
-                hh += 12
-            if hh < 24 and mm < 60:
-                return dt.time(hh, mm), f"texto {value!r} leido como {hh:02d}:{mm:02d}"
-    return None, ""
-
 
 def fechora_del_dia(value, fecha: pd.Timestamp, dias_extra: int) -> pd.Timestamp | None:
     """Devuelve la fecha-hora corregida a mano, o None si no cae en el dia del despacho."""
@@ -115,13 +79,6 @@ def fmt_original(value) -> str:
     if isinstance(value, dt.datetime):
         return value.strftime(DATE_FMT)
     return str(value)
-
-
-def clean_doc(value) -> str:
-    text = "" if value is None else str(value).strip()
-    if text.isdigit():
-        return text.zfill(8)  # DNI: Excel pierde los ceros a la izquierda
-    return ""  # "#N/A", "NO DATA"
 
 
 def load_despachos(
@@ -173,6 +130,11 @@ def load_despachos(
             irregular("FECHA_INCOMPLETA", "OMITIDO", "FECHA vacia o invalida")
             continue
 
+        sentido = Sentido.try_parse(row["SENTIDO"])
+        if sentido is None:
+            irregular("SENTIDO_INVALIDO", "OMITIDO", f"SENTIDO {row['SENTIDO']!r} no es IDA/VUELTA")
+            continue
+
         fecha = pd.Timestamp(row["FECHA"]).normalize()
         ini = fechora_del_dia(row.get("FECHORA_INI_VIAJE"), fecha, 0) if usar_fechora else None
         fin = fechora_del_dia(row.get("FECHORA_FIN_VIAJE"), fecha, 1) if usar_fechora else None
@@ -180,11 +142,11 @@ def load_despachos(
         if ini is None:
             hora_ini, nota_ini = parse_hora(row["HORA SENTIDO"])
             if hora_ini is not None:
-                ini = fecha + pd.Timedelta(hours=hora_ini.hour, minutes=hora_ini.minute, seconds=hora_ini.second)
+                ini = pd.Timestamp(combinar(fecha, hora_ini))
         if fin is None:
             hora_fin, nota_fin = parse_hora(row["LLEG."])
             if hora_fin is not None:
-                fin = fecha + pd.Timedelta(hours=hora_fin.hour, minutes=hora_fin.minute, seconds=hora_fin.second)
+                fin = pd.Timestamp(combinar(fecha, hora_fin))
         if ini == fecha:
             ini = None  # 00:00 se usa como relleno de filas sin programar
 
@@ -199,8 +161,8 @@ def load_despachos(
         if nota_fin:
             notas.append(f"LLEG.: {nota_fin}")
 
-        if fin < ini:
-            fin += pd.Timedelta(days=1)
+        fin, cruzo = cruzar_medianoche(ini, fin)
+        if cruzo:
             irregular("CRUCE_MEDIANOCHE", "AJUSTADO", "llegada despues de medianoche (+1 dia a la llegada)", ini, fin)
 
         if notas:
@@ -213,7 +175,7 @@ def load_despachos(
             continue
         if dur > max_dur:
             fin_original = fin
-            fin = ini + recorte
+            fin, _ = recortar_fin(ini, fin, max_duracion=max_dur, recorte=recorte)
             registro_recorte = irregular(
                 "FIN_IMPOSIBLE",
                 "RECORTADO",
@@ -234,8 +196,8 @@ def load_despachos(
                 "CODIGO_RUTA": row["CODIGO_RUTA"],
                 "INI": ini,
                 "FIN": fin,
-                "SENTIDO": 0 if str(row["SENTIDO"]).strip().upper() == "IDA" else 1,
-                "NRO_DOC_CONDUCTOR": clean_doc(row["NRO_DOC_CONDUCTOR"]),
+                "SENTIDO": sentido.codigo,
+                "NRO_DOC_CONDUCTOR": normalizar_dni(row["NRO_DOC_CONDUCTOR"]),
                 "_recorte": registro_recorte,
             }
         )
