@@ -7,10 +7,14 @@ from typing import Any
 import httpx
 
 from config import settings
-from domain.models import TrackPoint, Vehicle
+from domain.models import DateRange, TrackPoint, Vehicle
+from domain.rules import format_for_api, to_local_isoformat
 from infrastructure.http_retry import RateGate, request_with_retry
 
 logger = logging.getLogger(__name__)
+
+# Máximo de puntos por página que acepta /objects/{id}/coordinates.
+PAGE_SIZE = 1000
 
 
 class FMTrackError(RuntimeError):
@@ -242,6 +246,45 @@ class FMTrackClient:
         raise RuntimeError(
             f"No fue posible consultar las coordenadas del objeto: {last_exception}"
         ) from last_exception
+
+    def fetch_track(self, object_id: str, date_range: DateRange) -> list[TrackPoint]:
+        """
+        Todos los puntos del objeto en el rango, recorriendo la paginación
+        (continuation_token), con datetime en hora local de Lima.
+        """
+
+        points: list[TrackPoint] = []
+
+        continuation_token = None
+
+        while True:
+
+            page = self.get_object_coordinates(
+                object_id=object_id,
+                from_datetime=format_for_api(date_range.start),
+                to_datetime=format_for_api(date_range.end),
+                continuation_token=continuation_token,
+                limit=PAGE_SIZE,
+            )
+
+            for item in page.get("items") or []:
+
+                position = item.get("position", {})
+
+                points.append(
+                    TrackPoint(
+                        datetime=to_local_isoformat(item["datetime"]),
+                        latitude=position.get("latitude"),
+                        longitude=position.get("longitude"),
+                        speed=position.get("speed"),
+                        ignition_status=item.get("ignition_status"),
+                    )
+                )
+
+            continuation_token = page.get("continuation_token")
+
+            if continuation_token is None:
+                return points
 
     def get_closest_coordinate(
         self,

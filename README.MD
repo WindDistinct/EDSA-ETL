@@ -27,89 +27,84 @@ El resultado final permite almacenar y analizar los recorridos realizados por ca
 
 # Flujo general
 
-El comando principal (`despachos`) separa dos fuentes de datos independientes:
+Toda corrida tiene la misma forma: una **fuente** arma los viajes, `run_trips` los resuelve contra un
+**proveedor GPS** y los entrega a un **sink** que los escribe. Al final queda un reporte con el estado de
+cada viaje.
 
 ```
-LUCA_Backend
-/reportes/generar_reporte_despachos
-        |
-        v
-DispatchJob  (dispatch_client: siempre LucaClient)
-        |
-        v
-Tramos (placa, hora, conductor, sentido)
-        |
-        v
-TrackPipeline
-        |
-        +----------------+
-        |                |
-        v                v
-VehicleCatalog      TripResolver
-        |                |
-        |                v
-        |     FMTrackClient o LucaClient   (track_client)
-        |     (--provider fmtrack | luca)
-        |                |
-        |          API FM Track o
-        |          /reportes de LUCA_Backend
-        |
-        v
-TrackRecordWriter
-        |
-        v
-Documento final de Track Points
+Fuente                         Proveedor GPS (TrackProvider)       Sink (TripSink)
+------                         -----------------------------       ---------------
+DispatchJob (LUCA despachos)   FMTrackClient  (--provider fmtrack) TrackRecordWriter (Excel ATU + CSV "|")
+FixedRangeJob (listado)        LucaClient     (--provider luca)    TripCsvWriter     (un CSV por viaje)
+reconsideracion_tramas.py
+        |                                   ^                               ^
+        v                                   |                               |
+   list[Trip | TripOutcome]  ---->  application/run_trips.py  --------------+
+                                    - catálogo PLACA -> object_id (get_objects)
+                                    - fetch_track en paralelo (--workers)
+                                    - escritura en un solo hilo
+                                    - RunReport: estado por viaje -> <salida>_resumen.csv
 ```
 
 El despacho (qué placa salió, cuándo, con qué conductor) siempre viene de LUCA_Backend, sin importar el
-proveedor de GPS de la empresa. `--provider` solo decide con qué cliente se resuelven los puntos GPS de
-esos despachos. `VehicleCatalog` y `TripResolver` no saben qué proveedor están usando: ambos clientes
-(`FMTrackClient`, `LucaClient`) implementan la misma interfaz (`get_objects()` / `get_object_coordinates()`),
-así que el resto del pipeline es idéntico sin importar el `--provider` elegido — para `--provider luca`,
-`dispatch_client` y `track_client` son literalmente la misma instancia de `LucaClient`.
+proveedor de GPS de la empresa. `--provider` solo decide con qué cliente se resuelven los puntos GPS.
+Ambos clientes implementan el mismo contrato (`domain/ports.py`: `get_objects()` / `fetch_track()`), así
+que `run_trips` es idéntico sin importar el proveedor — para `--provider luca`, `dispatch_client` y
+`track_client` son literalmente la misma instancia de `LucaClient`.
+
+Estados posibles de un viaje en el reporte (`TripStatus`):
+
+| Estado          | Significado                                                                 |
+| --------------- | --------------------------------------------------------------------------- |
+| `ok`            | Tiene puntos y se escribió.                                                 |
+| `sin_puntos`    | El proveedor respondió, pero no hay puntos en ese rango.                    |
+| `sin_object_id` | La placa no está en el catálogo del proveedor GPS.                          |
+| `error`         | La consulta falló después de los reintentos (detalle en `DETALLE`).         |
+| `fila_invalida` | La fila de origen no forma un viaje válido (fechas o sentido inválidos).    |
+| `existente`     | El sink ya tenía ese viaje de una corrida anterior (solo `TripCsvWriter`).  |
 
 ---
 
 # Estructura del proyecto
 
 ```
-ATU_Files/
+EDSA-ETL/
 │
 ├── domain/                        # Modelos y reglas puras (sin pandas/httpx/openpyxl)
-│   ├── models.py                  # Vehicle, DateRange, TrackPoint, Trip, TrackResult
-│   └── rules.py                   # resolve_date_range, format_for_api, parse_boundary, ...
+│   ├── models.py                  # Vehicle, DateRange, TrackPoint, Trip, TripOutcome, Sentido, TripStatus
+│   ├── ports.py                   # Contratos TrackProvider y TripSink
+│   ├── rules.py                   # format_for_api, parse_boundary, parse_operational_datetime, ...
+│   ├── horas.py                   # Reglas de horas escritas a mano (parse_hora, cruce de medianoche, recorte)
+│   └── tiempo.py                  # LOCAL_TZ (America/Lima) y to_local
 │
 ├── infrastructure/                 # Adaptadores de I/O
-│   ├── fmtrack_client.py          # Cliente HTTP de FM Track
-│   ├── luca_client.py             # Cliente HTTP de LUCA_Backend (/reportes)
+│   ├── fmtrack_client.py          # FM Track: catálogo multi-key, fetch_track con paginación
+│   ├── luca_client.py             # LUCA_Backend (/reportes): despachos, vehículos, fetch_track
+│   ├── http_retry.py              # Reintentos con backoff exponencial, Retry-After y RateGate
 │   ├── excel_io.py                # Helpers de lectura/normalización de Excel
-│   └── track_record_writer.py     # Escritura incremental por hoja/día
+│   ├── track_record_writer.py     # Sink ATU: Excel (hoja por día) + CSV "|"
+│   └── trip_csv_writer.py         # Sink de un CSV por viaje (plantilla de reconsideración)
 │
 ├── application/                    # Orquestación
-│   ├── vehicle_catalog.py         # PLACA -> Vehicle (catálogo FM Track o LUCA) + fallback de IMEI
-│   ├── trip_resolver.py           # Resuelve un Trip a sus TrackPoints (con paginación)
-│   ├── track_pipeline.py          # Bucle único: mapear -> resolver -> escribir -> resumen
+│   ├── run_trips.py               # Bucle único: catálogo -> fetch en paralelo -> sink -> RunReport
 │   └── jobs/
-│       ├── dispatch_job.py        # Despachos (LUCA_Backend) + track points en un solo paso
-│       ├── fixed_range_job.py     # Un mismo rango de fechas para todo un listado simple
+│       ├── dispatch_job.py        # Despachos (LUCA_Backend) -> viajes
+│       ├── fixed_range_job.py     # Un mismo rango de fechas para todo un listado
 │       └── closest_coordinate_job.py  # [legacy] coordenada más cercana a un timestamp
 │
-├── scripts/                        # Chequeos manuales contra la API real (no son tests)
-│   ├── manual_check_objects.py
-│   └── manual_check_coordinate.py
+├── scripts/                        # Utilidades y flujos puntuales (ver docstring de cada uno)
+│   ├── reconsideracion_tramas.py  # Un CSV de trama por viaje rechazado (FM Track)
+│   ├── despachos_tramas.py        # Cruce de despachos manuales con un Excel de tramas
+│   ├── recuperar_omitidos.py      # Recupera despachos omitidos corregidos a mano
+│   ├── xlsx_to_csv.py / xlsx_formatear.py / unir_hojas.py
+│   └── manual_check_*.py          # Chequeos manuales contra la API real (no son tests)
 │
-├── tests/                          # pytest, sin red (usa un FakeFMTrackClient)
-│
-├── input/
-│   └── listado.xlsx                # solo para fixed-range / closest-coordinate
-│
-├── output/
-│   └── trackpoints/
-│
+├── tests/                          # pytest, sin red (FakeTrackProvider y httpx.MockTransport)
+├── input/  output/                 # (ignorados por git)
 ├── config.py
-├── logging_config.py
+├── logging_config.py               # Logging + filtro que oculta api_key
 ├── main.py                         # CLI (argparse, un subcomando por job)
-└── README.md
+└── README.MD
 ```
 
 ---
@@ -120,19 +115,19 @@ El comando `despachos` obtiene los tramos a resolver directo de LUCA_Backend —
 Excel de ATU (ni "documento operacional" ni "documento limpio"). El despacho es un dato de negocio que
 vive en LUCA_Backend independientemente de qué proveedor de GPS use la empresa para el tracking.
 
-`DispatchJob` arma internamente el mismo formato de fila que antes producía el Excel operacional,
-reutilizando los helpers ya existentes de `domain/rules.py`:
+`DispatchJob` convierte cada despacho en un `Trip` con los helpers de `domain/rules.py`. Un despacho sin
+salida o sin hora de último punto queda en el reporte como `fila_invalida`:
 
 | Columna interna                  | Campo de la API LUCA          | Transformación                                    |
 | --------------------------------- | ------------------------------ | --------------------------------------------------- |
 | RUC_EMPRESA                       | `ruc_empresa`                  | directo                                              |
 | PLACA                              | `placa`                         | `.strip()`                                           |
-| IMEI                               | —                                | vacío; lo completa `VehicleCatalog` con el `track_client` elegido |
+| IMEI                               | —                                | vacío; lo completa `run_trips` desde el catálogo del `track_client` |
 | CODIGO_RUTA                       | `codigo_ruta`                   | directo                                              |
 | FECHORA_INI_VIAJE                 | `fecha` + `hora`                | combinación directa                                  |
 | FECHA_HORA_FIN_TRAMO              | `hora_real_ultimo_punto`        | `domain.rules.parse_operational_datetime`            |
 | FECHA_HORA_FIN_TRAMO_CALCULADA    | `hora_calculada_ultimo_punto`   | `domain.rules.parse_operational_datetime`            |
-| SENTIDO                           | `sentido`                       | `"ida"→0, "vuelta"→1`                                |
+| SENTIDO                           | `sentido`                       | `Sentido.parse` → `IDA`/`VUELTA` (ATU: 0/1)          |
 | NRO_DOC_CONDUCTOR                 | `conductor`                     | `domain.rules.extract_driver_document`               |
 
 ---
@@ -180,7 +175,7 @@ vehículos por placa, no por un ID de dispositivo separado).
 
 ## Endpoints usados (LUCA_Backend, módulo `reportes`, solo requieren `x-api-key`)
 
-- `POST /reportes/obtener_imeis_vehiculos` — `{"empresa": <id>}` → IMEI de todas las placas de esa empresa. Se llama una sola vez por corrida (equivalente a `GET /objects` de FM Track) y alimenta el fallback de IMEI en `VehicleCatalog`. También es el origen del listado de vehículos de `fixed-range` cuando se omite `--input` (no filtra por ruta ni devuelve RUC/nombre de ruta, por eso `FixedRangeJob` completa `CODIGO_RUTA` con el `--luca-ruta` recibido y deja `RUC_EMPRESA` vacío).
+- `POST /reportes/obtener_imeis_vehiculos` — `{"empresa": <id>}` → IMEI de todas las placas de esa empresa. Se llama una sola vez por corrida (equivalente a `GET /objects` de FM Track) y alimenta el fallback de IMEI en `run_trips`. También es el origen del listado de vehículos de `fixed-range` cuando se omite `--input` (no filtra por ruta ni devuelve RUC/nombre de ruta, por eso `FixedRangeJob` completa `CODIGO_RUTA` con el `--luca-ruta` recibido y deja `RUC_EMPRESA` vacío).
 - `POST /reportes/generar_reporte_puntos_gps` — `{"empresa": <id>, "ruta": <id>, "placa": "...", "fecha": "YYYY-MM-DD"}` → puntos GPS continuos (`latitude`, `longitude`, `speed`, `timestamp_ms`) de esa placa en ese día calendario (hora Lima), ordenados. `LucaClient` llama este endpoint una vez por cada día distinto que toque el rango del tramo y combina los resultados. Solo se usa cuando `track_client` es `LucaClient` (`--provider luca`).
 - `POST /reportes/generar_reporte_despachos` — `{"empresa": <id>, "ruta": <id>, "fecha_inicio": "YYYY-MM-DD", "fecha_fin": "YYYY-MM-DD"}` → listado plano de despachos (placa, hora, conductor, sentido, hora real/calculada del último punto) de esa empresa/ruta en el rango. Es el origen de despachos del comando `despachos`, sin importar el `--provider` elegido para el GPS.
 
@@ -194,21 +189,11 @@ vehículos por placa, no por un ID de dispositivo separado).
 
 # Obtención de Track Points
 
-Clase:
+Cada proveedor implementa `fetch_track(object_id, date_range) -> list[TrackPoint]`
+(`infrastructure/fmtrack_client.py`, `infrastructure/luca_client.py`): la paginación, las credenciales y
+el formato de la API quedan dentro del adaptador. Los `TrackPoint` salen con la hora en Lima.
 
-```
-application/trip_resolver.py
-```
-
-Responsabilidades:
-
-- Recibir un tramo operacional
-- Resolver fechas
-- Consultar coordenadas FM Track
-- Manejar paginación
-- Enriquecer puntos GPS
-
-Consulta utilizada:
+Consulta utilizada en FM Track:
 
 ```
 GET /objects/{objectId}/coordinates
@@ -217,10 +202,13 @@ GET /objects/{objectId}/coordinates
 Parámetros:
 
 - object_id
-- from_datetime
-- to_datetime
+- from_datetime / to_datetime (ISO 8601 con offset de Lima, `-05:00`)
 - continuation_token
 - limit
+
+FM Track tiene dos API keys (`FMTRACK_API_KEY`, `FMTRACK_API_KEY_INTER`). `get_objects()` combina los
+vehículos de todas las que respondan (una key que falla se omite con un aviso) y cada vehículo se
+consulta solo con la key con la que se listó.
 
 ---
 
@@ -317,7 +305,8 @@ El CLI expone un subcomando por job (`python main.py <comando> --help` para ver 
 
 Reemplaza el flujo manual anterior (`operational` → `partition-split` → `pipeline`) en un solo paso: pide
 el listado de despachos directo a `/reportes/generar_reporte_despachos` en LUCA_Backend y lo resuelve con
-el mismo `TrackPipeline` de siempre. Clase: `application/jobs/dispatch_job.py` (`DispatchJob`).
+`run_trips`. Clase: `application/jobs/dispatch_job.py` (`DispatchJob`). Junto al Excel de salida queda
+`<salida>_resumen.csv` con el estado de cada despacho.
 
 | Flag             | Default   | Descripción                                                        |
 | ---------------- | --------- | --------------------------------------------------------------------- |
@@ -414,7 +403,7 @@ Principales librerías:
 | ------------------------ | ------------------ | ---------------------------------------------------------|
 | `FMTRACK_BASE_URL`       | `FMTrackClient`    | URL base de la API de FM Track.                          |
 | `FMTRACK_API_KEY`        | `FMTrackClient`    | API key principal.                                       |
-| `FMTRACK_API_KEY_INTER`  | `FMTrackClient`    | API key secundaria (fallback).                           |
+| `FMTRACK_API_KEY_INTER`  | `FMTrackClient`    | API key secundaria; sus vehículos se suman al catálogo. Vacía = no se usa. |
 | `LUCA_BASE_URL`          | `LucaClient`       | URL base de LUCA_Backend (ej. `http://127.0.0.1:5000/`). |
 | `LUCA_API_KEY`           | `LucaClient`       | Debe coincidir con `API_KEY_BACKEND` de LUCA_Backend.    |
 
@@ -426,7 +415,8 @@ Principales librerías:
 python -m pytest
 ```
 
-Los tests en `tests/` no hacen red: usan un `FakeFMTrackClient` (ver `tests/conftest.py`).
+Los tests en `tests/` no hacen red: usan un `FakeTrackProvider` (ver `tests/conftest.py`) o
+`httpx.MockTransport` para los clientes HTTP.
 
 Los scripts en `scripts/` sí pegan contra la API real de FM Track y son solo para chequeos manuales (requieren un `.env` válido); no los ejecuta pytest.
 
@@ -463,17 +453,16 @@ Cada tramo se procesa individualmente.
 
 Un fallo en un vehículo no detiene todo el lote.
 
-Ejemplo:
-
-```
-[ERROR] A0P736 -> No existe fecha final
-```
-
-El procesamiento continúa con el siguiente tramo.
+El procesamiento continúa con el siguiente tramo y cada fallo queda en `<salida>_resumen.csv` con su
+estado y detalle (ver [estados](#flujo-general)).
 
 Ante errores transitorios de red (timeouts, conexión caída, HTTP 429/5xx), cada llamada a FM Track o
-LUCA_Backend se reintenta automáticamente hasta 3 veces con backoff antes de darse por vencida
-(`infrastructure/http_retry.py`).
+LUCA_Backend se reintenta hasta 5 veces con backoff exponencial (1, 2, 4, 8 s, con variación aleatoria),
+respetando la cabecera `Retry-After`. Ante un 429, todos los workers hacen una misma pausa
+(`RateGate`) en vez de seguir consultando cada uno por su cuenta (`infrastructure/http_retry.py`).
+
+Las API keys de FM Track viajan como query param: los errores de `FMTrackClient` no incluyen la URL y
+`logging_config.py` oculta cualquier `api_key=...` que llegue a un log.
 
 ---
 

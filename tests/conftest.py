@@ -1,54 +1,38 @@
 from __future__ import annotations
 
-from domain.models import Vehicle
+from domain.models import DateRange, TrackPoint, Vehicle
 
 
-class FakeFMTrackClient:
+class FakeTrackProvider:
     """
-    Doble de prueba de FMTrackClient. No hace red.
+    Doble de prueba de un TrackProvider (FMTrackClient / LucaClient). No hace red.
 
-    coordinate_pages: dict[object_id, list[dict]] -- páginas devueltas en orden
-    por cada llamada sucesiva a get_object_coordinates para ese object_id.
+    tracks: dict[object_id, list[TrackPoint]] -- puntos que devuelve fetch_track.
+    errors: dict[object_id, Exception]        -- fetch_track lanza esa excepción.
+    ranges: registra el DateRange consultado por cada object_id.
     """
 
     def __init__(
         self,
         objects: dict[str, Vehicle] | None = None,
-        coordinate_pages: dict[str, list[dict]] | None = None,
+        tracks: dict[str, list[TrackPoint]] | None = None,
+        errors: dict[str, Exception] | None = None,
         closest: dict[str, object] | None = None,
     ):
         self._objects = objects or {}
-        self._coordinate_pages = coordinate_pages or {}
+        self._tracks = tracks or {}
+        self._errors = errors or {}
         self._closest = closest or {}
-        self._call_index: dict[str, int] = {}
+        self.ranges: dict[str, DateRange] = {}
 
     def get_objects(self) -> dict[str, Vehicle]:
         return dict(self._objects)
 
-    def get_object_coordinates(
-        self,
-        *,
-        object_id: str,
-        from_datetime: str,
-        to_datetime: str,
-        continuation_token: str | None = None,
-        limit: int | None = None,
-        include_geozones: bool | None = None,
-        include_tire_parameters: bool = False,
-    ) -> dict:
-
-        pages = self._coordinate_pages.get(
-            object_id,
-            [{"items": [], "continuation_token": None}],
-        )
-
-        index = self._call_index.get(object_id, 0)
-
-        page = pages[min(index, len(pages) - 1)]
-
-        self._call_index[object_id] = index + 1
-
-        return page
+    def fetch_track(self, object_id: str, date_range: DateRange) -> list[TrackPoint]:
+        self.ranges[object_id] = date_range
+        if object_id in self._errors:
+            raise self._errors[object_id]
+        return list(self._tracks.get(object_id, []))
 
     def get_closest_coordinate(
         self,
@@ -58,3 +42,15 @@ class FakeFMTrackClient:
         window_seconds: int = 30,
     ):
         return self._closest.get(object_id)
+
+
+# Alias: los tests de closest-coordinate lo usan con ese nombre.
+FakeFMTrackClient = FakeTrackProvider
+
+
+def vehicle(plate: str, object_id: str | None = None, imei: str = "863238075031916", credential: str = "default") -> Vehicle:
+    return Vehicle(plate=plate, object_id=object_id or f"obj-{plate}", imei=imei, credential=credential)
+
+
+def point(dt: str, lat: float = -12.0, lon: float = -77.0, speed: float = 10.0, ignition: str | None = "ON") -> TrackPoint:
+    return TrackPoint(datetime=dt, latitude=lat, longitude=lon, speed=speed, ignition_status=ignition)

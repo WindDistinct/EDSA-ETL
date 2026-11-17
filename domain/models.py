@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
 
@@ -96,25 +96,43 @@ class TrackPoint:
 
 @dataclass(frozen=True)
 class Trip:
-    ruc_empresa: str | None
-    placa: str | None
-    imei: str | None
-    codigo_ruta: str | None
-    sentido: str | None
-    nro_doc_conductor: str | None
-    object_id: str
+    """
+    Un viaje a resolver: una placa y el rango de tiempo cuyos puntos GPS se
+    quieren. object_id se resuelve contra el catálogo del proveedor si no
+    viene informado.
+    """
+
+    placa: str
     date_range: DateRange
+    ruc_empresa: str | None = None
+    imei: str | None = None
+    codigo_ruta: str | None = None
+    sentido: Sentido | None = None
+    nro_doc_conductor: str | None = None
+    object_id: str | None = None
     # Hora real de salida del despacho, cuando date_range fue recortado a una
     # ventana y ya no empieza en la salida. None = usar date_range.start.
     fechora_ini_viaje: datetime | None = None
+    # Identificador de la fila de origen (N°, fila del Excel, índice) para
+    # reportes y nombres de archivo.
+    ref: str | None = None
 
 
 @dataclass(frozen=True)
-class TrackResult:
-    trip: Trip
-    points: list[TrackPoint] = field(default_factory=list)
-    error: str | None = None
+class TripOutcome:
+    """
+    Qué pasó con un viaje. trip es None cuando la fila de origen no llegó a
+    formar un viaje válido (FILA_INVALIDA); ref y placa la identifican igual.
+    """
 
-    @property
-    def success(self) -> bool:
-        return self.error is None
+    status: TripStatus
+    ref: str | None = None
+    placa: str | None = None
+    trip: Trip | None = None
+    points: int = 0
+    output: str = ""
+    detail: str = ""
+
+    @classmethod
+    def of(cls, trip: Trip, status: TripStatus, **kwargs) -> TripOutcome:
+        return cls(status=status, ref=trip.ref, placa=trip.placa, trip=trip, **kwargs)

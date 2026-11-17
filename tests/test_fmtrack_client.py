@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import httpx
 import pytest
 
+from domain.models import DateRange
 from infrastructure.fmtrack_client import FMTrackClient
 from logging_config import RedactSecretsFilter
 
@@ -94,3 +96,30 @@ def test_redact_filter_masks_api_key():
     RedactSecretsFilter().filter(record)
 
     assert record.getMessage() == "GET https://h/objects?version=2&api_key=***&x=1"
+
+
+def test_fetch_track_follows_pagination_and_converts_to_lima_time():
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = dict(request.url.params)
+        calls.append(params)
+        item = lambda dt, lat: {"datetime": dt, "position": {"latitude": lat, "longitude": -77.0, "speed": 10}, "ignition_status": "ON"}  # noqa: E731
+        if "continuation_token" not in params:
+            return httpx.Response(200, json={"items": [item("2026-07-06T14:00:00.000Z", -12.0)], "continuation_token": "next"})
+        return httpx.Response(200, json={"items": [item("2026-07-07T03:30:00.000Z", -12.1)], "continuation_token": None})
+
+    points = _client(handler).fetch_track(
+        "o1", DateRange(start=datetime(2026, 7, 6, 0, 0), end=datetime(2026, 7, 6, 23, 59, 59))
+    )
+
+    # 14:00Z -> 09:00 Lima; 03:30Z del 07 -> 22:30 Lima del 06
+    assert [p.datetime for p in points] == ["2026-07-06T09:00:00", "2026-07-06T22:30:00"]
+    assert [p.latitude for p in points] == [-12.0, -12.1]
+    assert points[0].ignition_status == "ON"
+
+    assert calls[0]["from_datetime"] == "2026-07-06T00:00:00.000-05:00"
+    assert calls[0]["to_datetime"] == "2026-07-06T23:59:59.000-05:00"
+    assert calls[0]["limit"] == "1000"
+    assert calls[1]["continuation_token"] == "next"

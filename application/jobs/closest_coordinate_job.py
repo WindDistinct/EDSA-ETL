@@ -8,7 +8,6 @@ from time import perf_counter
 
 import pandas as pd
 
-from application.vehicle_catalog import VehicleCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,6 @@ class ClosestCoordinateJob:
         batch_delay: int = 10,
     ):
         self.fmtrack_client = fmtrack_client
-        self.vehicle_catalog = VehicleCatalog(fmtrack_client)
         self.batch_size = batch_size
         self.batch_delay = batch_delay
         self.stats = ClosestCoordinateStats()
@@ -128,7 +126,7 @@ class ClosestCoordinateJob:
 
         logger.info("Registros encontrados: %d", len(df))
 
-        vehicles = self.vehicle_catalog.build()
+        vehicles = self.fmtrack_client.get_objects()
 
         logger.info("Vehículos FM Track encontrados: %d", len(vehicles))
 

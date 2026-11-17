@@ -2,7 +2,7 @@ from datetime import datetime
 
 from openpyxl import load_workbook
 
-from domain.models import DateRange, TrackPoint, Trip
+from domain.models import DateRange, Sentido, TrackPoint, Trip
 from infrastructure.track_record_writer import TrackRecordWriter
 
 
@@ -12,7 +12,7 @@ def _trip() -> Trip:
         placa="A0P736",
         imei="863238075031916",
         codigo_ruta="R1",
-        sentido=0,
+        sentido=Sentido.IDA,
         nro_doc_conductor="06583153",
         object_id="obj-1",
         date_range=DateRange(

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from domain.models import TrackPoint, Trip
+from domain.models import Sentido, TrackPoint, Trip
 
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
@@ -45,6 +45,10 @@ def _as_datetime_text(value) -> str:
 
 
 class TrackRecordWriter:
+    """
+    Sink del formato ATU: un Excel con una hoja por día y un CSV consolidado
+    con separador "|". No es reanudable: cada corrida reescribe el archivo.
+    """
 
     BASE_HEADERS = [
         "RUC_EMPRESA",
@@ -128,6 +132,20 @@ class TrackRecordWriter:
 
             self._csv_writer.writerow(self.headers)
 
+    def __enter__(self) -> TrackRecordWriter:
+        self.open()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def existing(self, trip: Trip) -> str | None:
+        return None
+
+    def write(self, trip: Trip, points: list[TrackPoint]) -> str:
+        self.append(trip, points)
+        return self.output_file.name
+
     def _get_sheet(
         self,
         day: str,
@@ -193,7 +211,7 @@ class TrackRecordWriter:
                 point.latitude,
                 point.longitude,
                 point.speed,
-                _as_text(trip.sentido),
+                _as_text(trip.sentido.codigo if isinstance(trip.sentido, Sentido) else trip.sentido),
                 _as_text(trip.nro_doc_conductor),
             ]
 

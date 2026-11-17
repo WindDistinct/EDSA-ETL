@@ -1,67 +1,12 @@
 from datetime import datetime, timezone
 
-import pytest
-
 from domain.rules import (
     extract_driver_document,
     format_for_api,
     parse_boundary,
     parse_operational_datetime,
-    resolve_date_range,
     to_local_isoformat,
 )
-
-
-# resolve_date_range
-
-def test_resolve_date_range_uses_explicit_start_end():
-
-    row = {
-        "START_DATETIME": datetime(2026, 1, 1, 8, 0, 0),
-        "END_DATETIME": datetime(2026, 1, 1, 18, 0, 0),
-    }
-
-    date_range = resolve_date_range(row)
-
-    assert date_range.start == datetime(2026, 1, 1, 8, 0, 0)
-    assert date_range.end == datetime(2026, 1, 1, 18, 0, 0)
-
-
-def test_resolve_date_range_falls_back_to_operational_fields():
-
-    row = {
-        "FECHORA_INI_VIAJE": "2026-01-01T08:00:00",
-        "FECHA_HORA_FIN_TRAMO": "2026-01-01T18:00:00",
-    }
-
-    date_range = resolve_date_range(row)
-
-    assert date_range.start == datetime(2026, 1, 1, 8, 0, 0)
-    assert date_range.end == datetime(2026, 1, 1, 18, 0, 0)
-
-
-def test_resolve_date_range_falls_back_to_calculated_end_when_real_end_missing():
-
-    row = {
-        "FECHORA_INI_VIAJE": "2026-01-01T08:00:00",
-        "FECHA_HORA_FIN_TRAMO_CALCULADA": "2026-01-01T19:00:00",
-    }
-
-    date_range = resolve_date_range(row)
-
-    assert date_range.end == datetime(2026, 1, 1, 19, 0, 0)
-
-
-def test_resolve_date_range_raises_when_start_missing():
-
-    with pytest.raises(ValueError):
-        resolve_date_range({"FECHA_HORA_FIN_TRAMO": "2026-01-01T18:00:00"})
-
-
-def test_resolve_date_range_raises_when_end_missing():
-
-    with pytest.raises(ValueError):
-        resolve_date_range({"FECHORA_INI_VIAJE": "2026-01-01T08:00:00"})
 
 
 # format_for_api

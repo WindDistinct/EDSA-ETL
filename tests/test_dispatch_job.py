@@ -5,9 +5,8 @@ from datetime import datetime
 from openpyxl import load_workbook
 
 from application.jobs.dispatch_job import DispatchJob
-from domain.models import Vehicle
-from domain.rules import format_for_api
-from tests.conftest import FakeFMTrackClient
+from domain.models import DateRange, TripStatus
+from tests.conftest import FakeTrackProvider, point, vehicle
 
 
 class FakeDispatchClient:
@@ -39,133 +38,53 @@ DESPACHO = {
 
 def test_dispatch_job_uses_dispatch_client_for_despachos_and_track_client_for_gps(tmp_path):
 
-    vehicles = {
-        "A0P736": Vehicle(
-            plate="A0P736",
-            object_id="obj-1",
-            imei="863238075031916",
-            credential="default",
-        )
-    }
-
-    pages = {
-        "obj-1": [
-            {
-                "items": [
-                    {
-                        "datetime": "2026-07-06T14:00:00.000Z",
-                        "position": {"latitude": -12.0, "longitude": -77.0, "speed": 10.0},
-                    },
-                ],
-                "continuation_token": None,
-            },
-        ]
-    }
-
     dispatch_client = FakeDispatchClient([DESPACHO])
-    track_client = FakeFMTrackClient(objects=vehicles, coordinate_pages=pages)
+    track_client = FakeTrackProvider(
+        objects={"A0P736": vehicle("A0P736", "obj-1")},
+        tracks={"obj-1": [point("2026-07-06T09:00:00")]},
+    )
 
     output_file = tmp_path / "out.xlsx"
 
-    summary = DispatchJob(dispatch_client, track_client).run(
+    report = DispatchJob(dispatch_client, track_client).run(
         fecha_inicio="2026-07-01",
         fecha_fin="2026-07-10",
         output_file=str(output_file),
     )
 
     assert dispatch_client.calls == [("2026-06-30", "2026-07-10")]
-    assert summary.processed == 1
-    assert summary.track_points == 1
+    assert (report.processed, report.track_points) == (1, 1)
+    assert track_client.ranges["obj-1"] == DateRange(datetime(2026, 7, 6, 8, 0), datetime(2026, 7, 6, 14, 0))
 
-    workbook = load_workbook(output_file)
+    row = [c.value for c in load_workbook(output_file)["2026-07-06"][2]]
 
-    assert "2026-07-06" in workbook.sheetnames
+    assert row[9] == "0"  # sentido "ida" -> 0
+    assert row[10] == "12345678"  # documento del conductor
 
 
 def test_dispatch_job_works_when_dispatch_and_track_client_are_the_same_object(tmp_path):
 
-    class FakeLucaLikeClient(FakeDispatchClient, FakeFMTrackClient):
-        def __init__(self, despachos, objects, coordinate_pages):
+    class FakeLucaLikeClient(FakeDispatchClient, FakeTrackProvider):
+        def __init__(self, despachos, objects, tracks):
             FakeDispatchClient.__init__(self, despachos)
-            FakeFMTrackClient.__init__(self, objects=objects, coordinate_pages=coordinate_pages)
+            FakeTrackProvider.__init__(self, objects=objects, tracks=tracks)
 
-    vehicles = {
-        "A0P736": Vehicle(
-            plate="A0P736",
-            object_id="A0P736",
-            imei="863238075031916",
-            credential="luca",
-        )
-    }
-
-    pages = {
-        "A0P736": [
-            {
-                "items": [
-                    {
-                        "datetime": "2026-07-06T14:00:00.000Z",
-                        "position": {"latitude": -12.0, "longitude": -77.0, "speed": 10.0},
-                    },
-                ],
-                "continuation_token": None,
-            },
-        ]
-    }
-
-    client = FakeLucaLikeClient([DESPACHO], vehicles, pages)
-
-    output_file = tmp_path / "out.xlsx"
-
-    summary = DispatchJob(client, client).run(
-        fecha_inicio="2026-07-01",
-        fecha_fin="2026-07-10",
-        output_file=str(output_file),
+    client = FakeLucaLikeClient(
+        [DESPACHO],
+        {"A0P736": vehicle("A0P736", "A0P736", credential="luca")},
+        {"A0P736": [point("2026-07-06T09:00:00")]},
     )
 
-    assert summary.processed == 1
-    assert summary.track_points == 1
+    report = DispatchJob(client, client).run(
+        fecha_inicio="2026-07-01",
+        fecha_fin="2026-07-10",
+        output_file=str(tmp_path / "out.xlsx"),
+    )
 
-
-
-class RecordingTrackClient(FakeFMTrackClient):
-    """
-    Registra el rango consultado por cada object_id.
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.ranges: dict[str, tuple[str, str]] = {}
-
-    def get_object_coordinates(self, *, object_id, from_datetime, to_datetime, **kwargs):
-        self.ranges[object_id] = (from_datetime, to_datetime)
-        return super().get_object_coordinates(
-            object_id=object_id,
-            from_datetime=from_datetime,
-            to_datetime=to_datetime,
-            **kwargs,
-        )
+    assert (report.processed, report.track_points) == (1, 1)
 
 
 def test_dispatch_job_clips_track_range_to_window_and_skips_trips_outside(tmp_path):
-
-    vehicles = {
-        placa: Vehicle(plate=placa, object_id=placa, imei="", credential="default")
-        for placa in ("DENTRO", "FUERA")
-    }
-
-    pages = {
-        "DENTRO": [
-            {
-                "items": [
-                    {
-                        "datetime": "2026-07-06T15:00:00.000Z",
-                        "position": {"latitude": -12.0, "longitude": -77.0, "speed": 10.0},
-                    },
-                ],
-                "continuation_token": None,
-            },
-        ]
-    }
 
     # 08:00 -> 14:00: se cruza con la ventana 10:00 -> 12:00
     dentro = {**DESPACHO, "placa": "DENTRO"}
@@ -179,27 +98,51 @@ def test_dispatch_job_clips_track_range_to_window_and_skips_trips_outside(tmp_pa
     }
 
     dispatch_client = FakeDispatchClient([dentro, fuera])
-    track_client = RecordingTrackClient(objects=vehicles, coordinate_pages=pages)
+    track_client = FakeTrackProvider(
+        objects={p: vehicle(p, p) for p in ("DENTRO", "FUERA")},
+        tracks={"DENTRO": [point("2026-07-06T10:00:00")]},
+    )
 
     output_file = tmp_path / "out.xlsx"
 
-    summary = DispatchJob(dispatch_client, track_client).run(
+    report = DispatchJob(dispatch_client, track_client).run(
         fecha_inicio="2026-07-06 10:00",
         fecha_fin="2026-07-06 12:00",
         output_file=str(output_file),
     )
 
     assert dispatch_client.calls == [("2026-07-05", "2026-07-06")]
-    assert summary.total == 1
-    assert summary.processed == 1
-    assert list(track_client.ranges) == ["DENTRO"]
-
-    from_dt, to_dt = track_client.ranges["DENTRO"]
-
-    assert format_for_api(datetime(2026, 7, 6, 10, 0)) == from_dt
-    assert format_for_api(datetime(2026, 7, 6, 12, 0)) == to_dt
+    assert (report.total, report.processed) == (1, 1)
+    assert track_client.ranges == {"DENTRO": DateRange(datetime(2026, 7, 6, 10, 0), datetime(2026, 7, 6, 12, 0))}
 
     sheet = load_workbook(output_file)["2026-07-06"]
 
     # FECHORA_INI_VIAJE sigue siendo la salida real, no el inicio de la ventana
     assert "08:00" in str(sheet.cell(row=2, column=5).value)
+
+
+def test_dispatch_job_reports_despachos_without_valid_range(tmp_path):
+
+    sin_fin = {**DESPACHO, "placa": "SINFIN", "hora_real_ultimo_punto": None}
+    sin_salida = {**DESPACHO, "placa": "SINSALIDA", "hora": None, "fecha": None}
+
+    dispatch_client = FakeDispatchClient([sin_fin, sin_salida, DESPACHO])
+    track_client = FakeTrackProvider(
+        objects={"A0P736": vehicle("A0P736", "obj-1")},
+        tracks={"obj-1": [point("2026-07-06T09:00:00")]},
+    )
+
+    report = DispatchJob(dispatch_client, track_client).run(
+        fecha_inicio="2026-07-01",
+        fecha_fin="2026-07-10",
+        output_file=str(tmp_path / "out.xlsx"),
+    )
+
+    status = {o.placa: o.status for o in report.outcomes}
+
+    assert status == {
+        "SINFIN": TripStatus.FILA_INVALIDA,
+        "SINSALIDA": TripStatus.FILA_INVALIDA,
+        "A0P736": TripStatus.OK,
+    }
+    assert report.errors == 2

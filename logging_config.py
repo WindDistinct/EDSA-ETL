@@ -1,5 +1,6 @@
 import logging
 import re
+import sys
 
 # FM Track recibe la api_key como query param: cualquier URL que llegue a un
 # log la expondría.
@@ -21,6 +22,12 @@ class RedactSecretsFilter(logging.Filter):
 
 
 def configure_logging(level: int = logging.INFO) -> None:
+    # La consola de Windows (cp1252) no soporta los caracteres de la barra de
+    # alive_progress y muestra mal los acentos de los logs.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
