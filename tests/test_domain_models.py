@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from domain.models import DateRange, TrackPoint, TrackResult, Trip
+from domain.models import DateRange, Sentido, Trip, TripOutcome, TripStatus
 
 
 def test_date_range_rejects_end_before_start():
@@ -24,50 +24,53 @@ def test_date_range_allows_equal_start_and_end():
     assert date_range.end == dt
 
 
-def _make_trip(**overrides) -> Trip:
+def test_trip_only_requires_plate_and_range():
 
-    defaults = dict(
-        ruc_empresa="123",
-        placa="A0P736",
-        imei="863238075031916",
-        codigo_ruta="R1",
-        sentido="0",
-        nro_doc_conductor="12345678",
-        object_id="obj-1",
-        date_range=DateRange(
-            start=datetime(2026, 1, 1),
-            end=datetime(2026, 1, 2),
-        ),
-    )
+    trip = Trip(placa="A0P736", date_range=DateRange(start=datetime(2026, 1, 1), end=datetime(2026, 1, 2)))
 
-    defaults.update(overrides)
-
-    return Trip(**defaults)
+    assert trip.object_id is None and trip.sentido is None and trip.ref is None
 
 
-def test_track_result_success_when_no_error():
+def test_trip_outcome_of_copies_ref_and_plate():
 
-    result = TrackResult(
-        trip=_make_trip(),
-        points=[
-            TrackPoint(
-                datetime="2026-01-01T00:00:00.000",
-                latitude=-12.0,
-                longitude=-77.0,
-                speed=10.0,
-            )
-        ],
-    )
+    trip = Trip(placa="A0P736", date_range=DateRange(start=datetime(2026, 1, 1), end=datetime(2026, 1, 2)), ref="7")
 
-    assert result.success is True
+    outcome = TripOutcome.of(trip, TripStatus.OK, points=3)
+
+    assert (outcome.ref, outcome.placa, outcome.trip, outcome.points) == ("7", "A0P736", trip, 3)
 
 
-def test_track_result_failure_when_error_set():
+# Sentido
 
-    result = TrackResult(
-        trip=_make_trip(),
-        points=[],
-        error="La fecha inicial es obligatoria.",
-    )
 
-    assert result.success is False
+@pytest.mark.parametrize("valor", ["IDA", "ida", " Ida ", "I", "i", 0, "0"])
+def test_sentido_parse_ida(valor):
+
+    assert Sentido.parse(valor) is Sentido.IDA
+
+
+@pytest.mark.parametrize("valor", ["VUELTA", "vuelta", "V", 1, "1"])
+def test_sentido_parse_vuelta(valor):
+
+    assert Sentido.parse(valor) is Sentido.VUELTA
+
+
+def test_sentido_representaciones():
+
+    assert (Sentido.IDA.codigo, Sentido.IDA.letra) == (0, "I")
+    assert (Sentido.VUELTA.codigo, Sentido.VUELTA.letra) == (1, "V")
+
+
+@pytest.mark.parametrize("valor", [None, "", "X", 2, "IDA Y VUELTA"])
+def test_sentido_invalido(valor):
+
+    with pytest.raises(ValueError):
+        Sentido.parse(valor)
+
+    assert Sentido.try_parse(valor) is None
+
+
+def test_trip_status_se_escribe_como_texto():
+
+    assert str(TripStatus.SIN_PUNTOS) == "sin_puntos"
+    assert f"{TripStatus.OK}" == "ok"

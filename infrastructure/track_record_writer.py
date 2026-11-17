@@ -6,9 +6,8 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from domain.models import TrackPoint, Trip
-
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
+from domain.models import Sentido, TrackPoint, Trip
+from infrastructure.atu_format import ATU_COLUMNS, CSV_SEP, DATE_FMT
 
 
 def _as_text(value) -> str:
@@ -45,20 +44,12 @@ def _as_datetime_text(value) -> str:
 
 
 class TrackRecordWriter:
+    """
+    Sink del formato ATU: un Excel con una hoja por día y un CSV consolidado
+    con separador "|". No es reanudable: cada corrida reescribe el archivo.
+    """
 
-    BASE_HEADERS = [
-        "RUC_EMPRESA",
-        "PLACA",
-        "IMEI",
-        "CODIGO_RUTA",
-        "FECHORA_INI_VIAJE",
-        "FECHA_HORA_TRACK",
-        "LATITUD",
-        "LONGITUD",
-        "VELOCIDAD",
-        "SENTIDO",
-        "NRO_DOC_CONDUCTOR",
-    ]
+    BASE_HEADERS = list(ATU_COLUMNS)
 
     def __init__(
         self,
@@ -67,7 +58,7 @@ class TrackRecordWriter:
         *,
         write_csv: bool = True,
         csv_file: str | None = None,
-        csv_sep: str = "|",
+        csv_sep: str = CSV_SEP,
     ):
 
         self.output_file = Path(output_file)
@@ -127,6 +118,20 @@ class TrackRecordWriter:
             )
 
             self._csv_writer.writerow(self.headers)
+
+    def __enter__(self) -> TrackRecordWriter:
+        self.open()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def existing(self, trip: Trip) -> str | None:
+        return None
+
+    def write(self, trip: Trip, points: list[TrackPoint]) -> str:
+        self.append(trip, points)
+        return self.output_file.name
 
     def _get_sheet(
         self,
@@ -193,7 +198,7 @@ class TrackRecordWriter:
                 point.latitude,
                 point.longitude,
                 point.speed,
-                _as_text(trip.sentido),
+                _as_text(trip.sentido.codigo if isinstance(trip.sentido, Sentido) else trip.sentido),
                 _as_text(trip.nro_doc_conductor),
             ]
 

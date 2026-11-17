@@ -1,36 +1,22 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import httpx
 
 from config import settings
-from domain.models import Vehicle
-from infrastructure.http_retry import request_with_retry
+from domain.models import DateRange, TrackPoint, Vehicle
+from domain.tiempo import LOCAL_TZ, to_local
+from infrastructure.http_retry import RateGate, request_with_retry
 
 logger = logging.getLogger(__name__)
 
-LOCAL_TZ = ZoneInfo("America/Lima")
-
-
-def _parse_utc(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
-def _ts_ms_to_iso_utc(ts_ms: int) -> str:
-    return (
-        datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
-
 
 def _local_dates_between(start: datetime, end: datetime) -> list[str]:
-    start_local = start.astimezone(LOCAL_TZ).date()
-    end_local = end.astimezone(LOCAL_TZ).date()
+    start_local = to_local(start).date()
+    end_local = to_local(end).date()
 
     dates = []
     current = start_local
@@ -43,7 +29,13 @@ def _local_dates_between(start: datetime, end: datetime) -> list[str]:
 
 
 class LucaClient:
-    def __init__(self, empresa: int, ruta: int) -> None:
+    def __init__(
+        self,
+        empresa: int,
+        ruta: int,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self._empresa = empresa
         self._ruta = ruta
 
@@ -51,13 +43,16 @@ class LucaClient:
             base_url=settings.luca_base_url,
             headers={"x-api-key": settings.luca_api_key},
             timeout=30.0,
+            transport=transport,
         )
+
+        self._gate = RateGate()
 
     def close(self) -> None:
         self._client.close()
 
     def _post(self, endpoint: str, json: dict[str, Any]) -> httpx.Response:
-        return request_with_retry(self._client, "POST", endpoint, json=json)
+        return request_with_retry(self._client, "POST", endpoint, json=json, gate=self._gate)
 
     def get_objects(self) -> dict[str, Vehicle]:
         """
@@ -88,28 +83,19 @@ class LucaClient:
 
         return objects
 
-    def get_object_coordinates(
-        self,
-        object_id: str,
-        from_datetime: str,
-        to_datetime: str,
-        *,
-        continuation_token: str | None = None,
-        limit: int | None = None,
-        include_geozones: bool | None = None,
-        include_tire_parameters: bool = False,
-    ) -> dict[str, Any]:
+    def fetch_track(self, object_id: str, date_range: DateRange) -> list[TrackPoint]:
         """
-        Obtiene los puntos GPS continuos de una placa dentro de un rango de fechas,
-        combinando la respuesta de uno o más días (LUCA reporta por día calendario).
+        Puntos GPS de una placa (object_id = placa en LUCA) dentro del rango,
+        combinando uno o más días (LUCA reporta por día calendario), con
+        datetime en hora local de Lima.
         """
 
-        start_dt = _parse_utc(from_datetime)
-        end_dt = _parse_utc(to_datetime)
+        start = to_local(date_range.start)
+        end = to_local(date_range.end)
 
-        items: list[dict[str, Any]] = []
+        points: list[tuple[int, TrackPoint]] = []
 
-        for fecha in _local_dates_between(start_dt, end_dt):
+        for fecha in _local_dates_between(start, end):
 
             response = self._post(
                 "/reportes/generar_reporte_puntos_gps",
@@ -125,35 +111,29 @@ class LucaClient:
 
             for punto in response.json().get("puntos", []):
 
-                punto_dt_obj = datetime.fromtimestamp(
-                    punto["timestamp_ms"] / 1000, tz=timezone.utc
-                )
+                ts_ms = punto["timestamp_ms"]
+                instante = datetime.fromtimestamp(ts_ms / 1000, tz=LOCAL_TZ)
 
-                if not (start_dt <= punto_dt_obj <= end_dt):
+                if not (start <= instante <= end):
                     continue
 
-                punto_dt = _ts_ms_to_iso_utc(punto["timestamp_ms"])
-
-                items.append(
-                    {
-                        "datetime": punto_dt,
-                        "position": {
-                            "latitude": punto.get("latitude"),
-                            "longitude": punto.get("longitude"),
-                            "speed": punto.get("speed"),
-                        },
-                    }
+                points.append(
+                    (
+                        ts_ms,
+                        TrackPoint(
+                            datetime=instante.replace(tzinfo=None).isoformat(timespec="seconds"),
+                            latitude=punto.get("latitude"),
+                            longitude=punto.get("longitude"),
+                            speed=punto.get("speed"),
+                        ),
+                    )
                 )
 
-        items.sort(key=lambda item: item["datetime"])
+        points.sort(key=lambda pair: pair[0])
 
-        logger.info("[OK] luca -> %d puntos GPS obtenidos para %s.", len(items), object_id)
+        logger.info("[OK] luca -> %d puntos GPS obtenidos para %s.", len(points), object_id)
 
-        return {
-            "items": items,
-            "continuation_token": None,
-            "credential": "luca",
-        }
+        return [point for _, point in points]
 
     def get_dispatch_records(self, fecha_inicio: str, fecha_fin: str) -> list[dict[str, Any]]:
         """

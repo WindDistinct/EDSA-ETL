@@ -1,30 +1,37 @@
-import argparse
+"""CLI: arma los clientes según los argumentos y delega en application/commands.py."""
 
-from application.jobs.closest_coordinate_job import ClosestCoordinateJob
-from application.jobs.dispatch_job import DispatchJob
-from application.jobs.fixed_range_job import FixedRangeJob
+import argparse
+from contextlib import ExitStack, closing
+
+from application import commands
+from application.run_trips import RunReport, report_path
 from infrastructure.fmtrack_client import FMTrackClient
 from infrastructure.luca_client import LucaClient
 from logging_config import configure_logging
 
+RANGE_HELP_START = 'Inicio del rango (YYYY-MM-DD o "YYYY-MM-DD HH:MM[:SS]").'
+RANGE_HELP_END = 'Fin del rango (YYYY-MM-DD o "YYYY-MM-DD HH:MM[:SS]"; solo fecha = hasta 23:59:59).'
 
-def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
+
+def add_provider_arguments(parser: argparse.ArgumentParser, *, luca_required: bool = False) -> None:
 
     parser.add_argument(
         "--provider",
         choices=["fmtrack", "luca"],
         default="fmtrack",
-        help="Fuente de datos GPS a utilizar (default: fmtrack).",
+        help="Proveedor GPS para resolver los track points (default: fmtrack).",
     )
     parser.add_argument(
         "--luca-empresa",
         type=int,
-        help="ID de empresa en LUCA (requerido si --provider luca).",
+        required=luca_required,
+        help="ID de empresa en LUCA" + ("." if luca_required else " (requerido si --provider luca)."),
     )
     parser.add_argument(
         "--luca-ruta",
         type=int,
-        help="ID de ruta en LUCA (requerido si --provider luca).",
+        required=luca_required,
+        help="ID de ruta en LUCA" + ("." if luca_required else " (requerido si --provider luca)."),
     )
 
 
@@ -34,20 +41,8 @@ def add_workers_argument(parser: argparse.ArgumentParser) -> None:
         "--workers",
         type=int,
         default=8,
-        help="Tramos resueltos en paralelo (default: 8).",
+        help="Viajes resueltos en paralelo (default: 8).",
     )
-
-
-def build_client(args: argparse.Namespace):
-
-    if args.provider == "luca":
-
-        if args.luca_empresa is None or args.luca_ruta is None:
-            raise SystemExit("--luca-empresa y --luca-ruta son requeridos con --provider luca.")
-
-        return LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
-
-    return FMTrackClient()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,50 +52,69 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser(
+        "despachos",
+        help="Despachos de una empresa/ruta desde LUCA_Backend por rango de fechas, con sus track points (Excel ATU).",
+    )
+    p.add_argument("--start", required=True, help=RANGE_HELP_START + " Filtra la hora de los track points.")
+    p.add_argument("--end", required=True, help=RANGE_HELP_END)
+    p.add_argument("--output", required=True, help="Excel de salida (deja también .csv y _resumen.csv).")
+    add_provider_arguments(p, luca_required=True)
+    add_workers_argument(p)
+
+    p = sub.add_parser(
         "fixed-range",
         help=(
-            "Aplica un mismo rango de fechas a un listado de vehículos: un Excel simple "
-            "(--input) o, sin --input, el listado de vehículos de --luca-empresa/--luca-ruta."
+            "Un mismo rango de fechas para un listado de vehículos: un Excel simple (--input) o, "
+            "sin --input, los vehículos de --luca-empresa (Excel ATU)."
         ),
     )
-    p.add_argument(
-        "--input",
-        help="Excel simple (RUC/CODIGO_RUTA/PLACA/IMEI). Si se omite, se requieren --luca-empresa y --luca-ruta.",
-    )
-    p.add_argument("--output", required=True)
-    p.add_argument("--start", required=True, help="Inicio del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\").")
-    p.add_argument("--end", required=True, help="Fin del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\"; solo fecha = hasta 23:59:59).")
+    p.add_argument("--input", help="Excel simple (RUC/CODIGO_RUTA/PLACA/IMEI). Sin él se usan --luca-empresa/--luca-ruta.")
+    p.add_argument("--output", required=True, help="Excel de salida (deja también .csv y _resumen.csv).")
+    p.add_argument("--start", required=True, help=RANGE_HELP_START)
+    p.add_argument("--end", required=True, help=RANGE_HELP_END)
+    add_provider_arguments(p)
     add_workers_argument(p)
-    add_provider_arguments(p)
 
     p = sub.add_parser(
-        "closest-coordinate",
-        help="[legacy] Busca la coordenada mas cercana a un timestamp por fila.",
+        "reconsideracion",
+        help="Un CSV de trama por viaje del Excel de viajes rechazados (Plantilla_Traza_Reconsideracion).",
     )
-    p.add_argument("--input", required=True)
-    p.add_argument("--output", required=True)
-    p.add_argument("--batch-size", type=int, default=1000)
-    p.add_argument("--batch-delay", type=int, default=10)
+    p.add_argument("--input", required=True, help="Excel Reconsideracion_Viajes_Rechazados (N°, Placa, Sentido, H. Inicio, H. Fin).")
+    p.add_argument("--output", default="output/reconsideracion", help="Carpeta de salida (default: output/reconsideracion).")
+    p.add_argument("--limite", type=int, help="Procesar solo las primeras N filas (prueba).")
     add_provider_arguments(p)
-
-    p = sub.add_parser(
-        "despachos",
-        help="Obtiene los despachos de una empresa/ruta desde LUCA_Backend por rango de fechas y resuelve sus track points con el proveedor GPS elegido (reemplaza operational/partition-split/pipeline).",
-    )
-    p.add_argument("--luca-empresa", type=int, required=True)
-    p.add_argument("--luca-ruta", type=int, required=True)
-    p.add_argument("--start", required=True, help="Inicio del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\"). Filtra la hora de los track points.")
-    p.add_argument("--end", required=True, help="Fin del rango (YYYY-MM-DD o \"YYYY-MM-DD HH:MM[:SS]\"; solo fecha = hasta 23:59:59).")
-    p.add_argument("--output", required=True)
-    p.add_argument(
-        "--provider",
-        choices=["fmtrack", "luca"],
-        default="fmtrack",
-        help="Fuente de datos GPS para resolver los track points (default: fmtrack). Los despachos siempre se obtienen de LUCA_Backend.",
-    )
     add_workers_argument(p)
 
     return parser
+
+
+def _luca(args: argparse.Namespace) -> LucaClient:
+
+    if args.luca_empresa is None or args.luca_ruta is None:
+        raise SystemExit("--luca-empresa y --luca-ruta son requeridos para consultar LUCA.")
+
+    return LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
+
+
+def _track_client(args: argparse.Namespace, stack: ExitStack, luca: LucaClient | None = None):
+    """
+    Cliente GPS según --provider. Con --provider luca reutiliza el LucaClient
+    que ya se haya abierto para despachos o vehículos.
+    """
+
+    if args.provider == "luca":
+        return luca or stack.enter_context(closing(_luca(args)))
+
+    return stack.enter_context(closing(FMTrackClient()))
+
+
+def _print_summary(report: RunReport, resumen: str) -> None:
+
+    print()
+    for estado, cantidad in sorted(report.counts().items()):
+        print(f"  {estado:<15}{cantidad:>7}")
+    print(f"  {'total':<15}{report.total:>7}")
+    print(f"\nResumen por viaje: {resumen}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -109,73 +123,45 @@ def main(argv: list[str] | None = None) -> None:
 
     args = build_parser().parse_args(argv)
 
-    if args.command == "despachos":
-        dispatch_client = LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
-        track_client = dispatch_client if args.provider == "luca" else FMTrackClient()
-        try:
-            DispatchJob(dispatch_client, track_client, max_workers=args.workers).run(
-                fecha_inicio=args.start,
-                fecha_fin=args.end,
-                output_file=args.output,
+    with ExitStack() as stack:
+
+        if args.command == "despachos":
+            luca = stack.enter_context(closing(_luca(args)))
+            report = commands.despachos(
+                luca,
+                _track_client(args, stack, luca),
+                start=args.start,
+                end=args.end,
+                output=args.output,
+                workers=args.workers,
             )
-        finally:
-            dispatch_client.close()
-            if track_client is not dispatch_client:
-                track_client.close()
-        return
+            resumen = report_path(args.output)
 
-    if args.command == "fixed-range" and not args.input:
-
-        if args.luca_empresa is None or args.luca_ruta is None:
-            raise SystemExit(
-                "--luca-empresa y --luca-ruta son requeridos cuando no se usa --input."
-            )
-
-        vehicle_source_client = LucaClient(empresa=args.luca_empresa, ruta=args.luca_ruta)
-        track_client = vehicle_source_client if args.provider == "luca" else FMTrackClient()
-
-        try:
-            FixedRangeJob(
-                track_client,
-                vehicle_source_client=vehicle_source_client,
-                max_workers=args.workers,
-            ).run(
-                output_file=args.output,
-                start_date=args.start,
-                end_date=args.end,
+        elif args.command == "fixed-range":
+            luca = None if args.input else stack.enter_context(closing(_luca(args)))
+            report = commands.rango_fijo(
+                _track_client(args, stack, luca),
+                start=args.start,
+                end=args.end,
+                output=args.output,
+                workers=args.workers,
+                input_file=args.input,
+                vehicle_source=luca,
                 codigo_ruta=args.luca_ruta,
             )
-        finally:
-            vehicle_source_client.close()
-            if track_client is not vehicle_source_client:
-                track_client.close()
-        return
+            resumen = report_path(args.output)
 
-    client = build_client(args)
-
-    try:
-
-        if args.command == "fixed-range":
-            FixedRangeJob(client, max_workers=args.workers).run(
+        elif args.command == "reconsideracion":
+            report = commands.reconsideracion(
+                _track_client(args, stack),
                 input_file=args.input,
-                output_file=args.output,
-                start_date=args.start,
-                end_date=args.end,
+                output_dir=args.output,
+                workers=args.workers,
+                limite=args.limite,
             )
+            resumen = f"{args.output}/_resumen.csv"
 
-        elif args.command == "closest-coordinate":
-            ClosestCoordinateJob(
-                client,
-                batch_size=args.batch_size,
-                batch_delay=args.batch_delay,
-            ).run(
-                input_file=args.input,
-                output_file=args.output,
-            )
-
-    finally:
-
-        client.close()
+    _print_summary(report, str(resumen))
 
 
 if __name__ == "__main__":
