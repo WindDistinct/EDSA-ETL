@@ -34,9 +34,9 @@ cada viaje.
 ```
 Fuente                         Proveedor GPS (TrackProvider)       Sink (TripSink)
 ------                         -----------------------------       ---------------
-DispatchJob (LUCA despachos)   FMTrackClient  (--provider fmtrack) TrackRecordWriter (Excel ATU + CSV "|")
-FixedRangeJob (listado)        LucaClient     (--provider luca)    TripCsvWriter     (un CSV por viaje)
-reconsideracion_tramas.py
+despachos_luca (LUCA)          FMTrackClient  (--provider fmtrack) TrackRecordWriter (Excel ATU + CSV "|")
+rango_fijo (listado)           LucaClient     (--provider luca)    TripCsvWriter     (un CSV por viaje)
+reconsideracion (Excel)
         |                                   ^                               ^
         v                                   |                               |
    list[Trip | TripOutcome]  ---->  application/run_trips.py  --------------+
@@ -73,7 +73,7 @@ EDSA-ETL/
 ├── domain/                        # Modelos y reglas puras (sin pandas/httpx/openpyxl)
 │   ├── models.py                  # Vehicle, DateRange, TrackPoint, Trip, TripOutcome, Sentido, TripStatus
 │   ├── ports.py                   # Contratos TrackProvider y TripSink
-│   ├── rules.py                   # format_for_api, parse_boundary, parse_operational_datetime, ...
+│   ├── rules.py                   # format_for_api, to_local_isoformat, parse_boundary
 │   ├── horas.py                   # Reglas de horas escritas a mano (parse_hora, cruce de medianoche, recorte)
 │   └── tiempo.py                  # LOCAL_TZ (America/Lima) y to_local
 │
@@ -87,17 +87,17 @@ EDSA-ETL/
 │
 ├── application/                    # Orquestación
 │   ├── run_trips.py               # Bucle único: catálogo -> fetch en paralelo -> sink -> RunReport
-│   └── jobs/
-│       ├── dispatch_job.py        # Despachos (LUCA_Backend) -> viajes
-│       ├── fixed_range_job.py     # Un mismo rango de fechas para todo un listado
-│       └── closest_coordinate_job.py  # [legacy] coordenada más cercana a un timestamp
+│   ├── commands.py                # Un caso de uso por subcomando: fuente + proveedor + sink
+│   └── sources/                   # Arman la lista de viajes (Trip | TripOutcome)
+│       ├── despachos_luca.py      # Despachos de LUCA_Backend (y el parseo de su formato)
+│       ├── rango_fijo.py          # Un mismo rango para un listado (Excel o vehículos de LUCA)
+│       └── reconsideracion.py     # Excel de viajes rechazados
 │
 ├── scripts/                        # Utilidades y flujos puntuales (ver docstring de cada uno)
-│   ├── reconsideracion_tramas.py  # Un CSV de trama por viaje rechazado (FM Track)
 │   ├── despachos_tramas.py        # Cruce de despachos manuales con un Excel de tramas
 │   ├── recuperar_omitidos.py      # Recupera despachos omitidos corregidos a mano
 │   ├── xlsx_to_csv.py / xlsx_formatear.py / unir_hojas.py
-│   └── manual_check_*.py          # Chequeos manuales contra la API real (no son tests)
+│   └── manual_check_objects.py    # Chequeo manual contra la API real (no es un test)
 │
 ├── tests/                          # pytest, sin red (FakeTrackProvider y httpx.MockTransport)
 ├── input/  output/                 # (ignorados por git)
@@ -115,7 +115,7 @@ El comando `despachos` obtiene los tramos a resolver directo de LUCA_Backend —
 Excel de ATU (ni "documento operacional" ni "documento limpio"). El despacho es un dato de negocio que
 vive en LUCA_Backend independientemente de qué proveedor de GPS use la empresa para el tracking.
 
-`DispatchJob` convierte cada despacho en un `Trip` con los helpers de `domain/rules.py`. Un despacho sin
+`application/sources/despachos_luca.py` convierte cada despacho en un `Trip`. Un despacho sin
 salida o sin hora de último punto queda en el reporte como `fila_invalida`:
 
 | Columna interna                  | Campo de la API LUCA          | Transformación                                    |
@@ -125,10 +125,10 @@ salida o sin hora de último punto queda en el reporte como `fila_invalida`:
 | IMEI                               | —                                | vacío; lo completa `run_trips` desde el catálogo del `track_client` |
 | CODIGO_RUTA                       | `codigo_ruta`                   | directo                                              |
 | FECHORA_INI_VIAJE                 | `fecha` + `hora`                | combinación directa                                  |
-| FECHA_HORA_FIN_TRAMO              | `hora_real_ultimo_punto`        | `domain.rules.parse_operational_datetime`            |
-| FECHA_HORA_FIN_TRAMO_CALCULADA    | `hora_calculada_ultimo_punto`   | `domain.rules.parse_operational_datetime`            |
+| FECHA_HORA_FIN_TRAMO              | `hora_real_ultimo_punto`        | `despachos_luca.parse_operational_datetime`          |
+| FECHA_HORA_FIN_TRAMO_CALCULADA    | `hora_calculada_ultimo_punto`   | `despachos_luca.parse_operational_datetime`          |
 | SENTIDO                           | `sentido`                       | `Sentido.parse` → `IDA`/`VUELTA` (ATU: 0/1)          |
-| NRO_DOC_CONDUCTOR                 | `conductor`                     | `domain.rules.extract_driver_document`               |
+| NRO_DOC_CONDUCTOR                 | `conductor`                     | `despachos_luca.extract_driver_document`             |
 
 ---
 
@@ -175,7 +175,7 @@ vehículos por placa, no por un ID de dispositivo separado).
 
 ## Endpoints usados (LUCA_Backend, módulo `reportes`, solo requieren `x-api-key`)
 
-- `POST /reportes/obtener_imeis_vehiculos` — `{"empresa": <id>}` → IMEI de todas las placas de esa empresa. Se llama una sola vez por corrida (equivalente a `GET /objects` de FM Track) y alimenta el fallback de IMEI en `run_trips`. También es el origen del listado de vehículos de `fixed-range` cuando se omite `--input` (no filtra por ruta ni devuelve RUC/nombre de ruta, por eso `FixedRangeJob` completa `CODIGO_RUTA` con el `--luca-ruta` recibido y deja `RUC_EMPRESA` vacío).
+- `POST /reportes/obtener_imeis_vehiculos` — `{"empresa": <id>}` → IMEI de todas las placas de esa empresa. Se llama una sola vez por corrida (equivalente a `GET /objects` de FM Track) y alimenta el fallback de IMEI en `run_trips`. También es el origen del listado de vehículos de `fixed-range` cuando se omite `--input` (no filtra por ruta ni devuelve RUC/nombre de ruta, por eso `rango_fijo` completa `CODIGO_RUTA` con el `--luca-ruta` recibido y deja `RUC_EMPRESA` vacío).
 - `POST /reportes/generar_reporte_puntos_gps` — `{"empresa": <id>, "ruta": <id>, "placa": "...", "fecha": "YYYY-MM-DD"}` → puntos GPS continuos (`latitude`, `longitude`, `speed`, `timestamp_ms`) de esa placa en ese día calendario (hora Lima), ordenados. `LucaClient` llama este endpoint una vez por cada día distinto que toque el rango del tramo y combina los resultados. Solo se usa cuando `track_client` es `LucaClient` (`--provider luca`).
 - `POST /reportes/generar_reporte_despachos` — `{"empresa": <id>, "ruta": <id>, "fecha_inicio": "YYYY-MM-DD", "fecha_fin": "YYYY-MM-DD"}` → listado plano de despachos (placa, hora, conductor, sentido, hora real/calculada del último punto) de esa empresa/ruta en el rango. Es el origen de despachos del comando `despachos`, sin importar el `--provider` elegido para el GPS.
 
@@ -299,13 +299,14 @@ Columnas:
 
 # Ejecución
 
-El CLI expone un subcomando por job (`python main.py <comando> --help` para ver sus argumentos).
+El CLI expone un subcomando por caso de uso (`python main.py <comando> --help` para ver sus argumentos):
+`despachos`, `fixed-range` y `reconsideracion`. Todos dejan un resumen por viaje.
 
 ## Comando principal: `despachos` (sin Excels de ATU)
 
 Reemplaza el flujo manual anterior (`operational` → `partition-split` → `pipeline`) en un solo paso: pide
 el listado de despachos directo a `/reportes/generar_reporte_despachos` en LUCA_Backend y lo resuelve con
-`run_trips`. Clase: `application/jobs/dispatch_job.py` (`DispatchJob`). Junto al Excel de salida queda
+`run_trips` (`application/commands.py::despachos`). Junto al Excel de salida queda
 `<salida>_resumen.csv` con el estado de cada despacho.
 
 | Flag             | Default   | Descripción                                                        |
@@ -339,9 +340,6 @@ Antes de correrlo, confirmar en `.env` que `LUCA_BASE_URL` apunta al backend cor
 
 ## Otros comandos
 
-`closest-coordinate` no depende de despachos de LUCA — trabaja sobre un Excel simple
-(`RUC/CODIGO_RUTA/PLACA/IMEI`) y acepta el mismo selector de proveedor GPS.
-
 `fixed-range` aplica un mismo rango de fechas fijo a un listado de vehículos, y admite dos orígenes
 para ese listado:
 
@@ -358,7 +356,7 @@ para ese listado:
 | `--provider`     | `fmtrack` | Proveedor de GPS para resolver los track points: `fmtrack` o `luca`.        |
 | `--luca-empresa` | —         | ID de empresa en LUCA. Requerido si `--provider luca`, o siempre que se omita `--input`. |
 | `--luca-ruta`    | —         | ID de ruta en LUCA. Requerido si `--provider luca`, o siempre que se omita `--input`. |
-| `--workers`      | `8`       | Tramos resueltos en paralelo (solo `fixed-range`).                            |
+| `--workers`      | `8`       | Viajes resueltos en paralelo.                                                 |
 
 ```bash
 # Un mismo rango de fechas fijo para todo un listado simple (FM Track)
@@ -369,9 +367,38 @@ python main.py fixed-range --input input/listado.xlsx --output output/trackpoint
 
 # Sin Excel: listado de vehículos directo de LUCA (empresa/ruta), tracking por FM Track (default)
 python main.py fixed-range --output output/trackpoints.xlsx --start "2026-07-06 14:00:00" --end "2026-07-12 22:43:00" --luca-empresa 10 --luca-ruta 6
+```
 
-# Legacy: coordenada más cercana a un timestamp por fila
-python main.py closest-coordinate --input input/listado.xlsx --output output/resultado.xlsx
+## `reconsideracion`: un CSV por viaje rechazado
+
+Lee el Excel `Reconsideracion_Viajes_Rechazados` (columnas `N°`, `RUC`, `Placa`, `Ruta`, `Sentido`,
+`H. Inicio`, `H. Fin`, fechas `dd/mm/yyyy HH:MM:SS`) y escribe en la carpeta de salida un CSV por viaje
+con el formato de `Plantilla_Traza_Reconsideracion.csv`:
+
+```
+{N}_{PLACA}_{YYYYMMDD_HHMMSS}.csv        (timestamp del primer punto GPS del viaje)
+latitud,longitud,timestamp,velocidad,sentido
+-12.0750933,-77.1165316,2026-10-20 10:34:17,32,V
+```
+
+El sentido va como letra (`IDA` → `I`, `VUELTA` → `V`) y no se filtra por ignición. Los viajes sin puntos
+o con error no generan archivo; quedan en `_resumen.csv` dentro de la misma carpeta. Es reanudable: al
+volver a correrlo se saltan los `N°` que ya tienen CSV (estado `existente`) y solo se reintentan los que
+faltan.
+
+| Flag         | Default                   | Descripción                                          |
+| ------------ | ------------------------- | ---------------------------------------------------- |
+| `--input`    | —                         | Excel de viajes rechazados.                          |
+| `--output`   | `output/reconsideracion`  | Carpeta de salida.                                   |
+| `--limite`   | —                         | Procesar solo las primeras N filas (prueba).         |
+| `--provider` | `fmtrack`                 | Proveedor GPS (`luca` requiere `--luca-empresa/--luca-ruta`). |
+| `--workers`  | `8`                       | Viajes resueltos en paralelo.                        |
+
+```bash
+python main.py reconsideracion --input "input/Reconsideracion_Viajes_Rechazados_1794927644146 - 0.xlsx"
+
+# Prueba con las primeras 10 filas en otra carpeta
+python main.py reconsideracion --input input/rechazados.xlsx --output output/prueba --limite 10
 ```
 
 ---

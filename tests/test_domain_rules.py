@@ -1,10 +1,8 @@
 from datetime import datetime, timezone
 
 from domain.rules import (
-    extract_driver_document,
     format_for_api,
     parse_boundary,
-    parse_operational_datetime,
     to_local_isoformat,
 )
 
@@ -57,58 +55,6 @@ def test_parse_boundary_start_date_only_stays_midnight():
     result = parse_boundary("2026-07-06", is_end=False)
 
     assert result == datetime(2026, 7, 6, 0, 0, 0)
-
-
-# extract_driver_document
-
-def test_extract_driver_document_no_comma():
-
-    assert extract_driver_document("Juan Perez") == ""
-
-
-def test_extract_driver_document_one_comma():
-
-    assert extract_driver_document("Juan Perez, 12345678") == "12345678"
-
-
-def test_extract_driver_document_multiple_commas():
-
-    assert extract_driver_document("Perez, Juan, 12345678") == "12345678"
-
-
-def test_extract_driver_document_none_returns_empty():
-
-    assert extract_driver_document(None) == ""
-
-
-# parse_operational_datetime
-
-def test_parse_operational_datetime_variant_de():
-
-    result = parse_operational_datetime(
-        "Mon Jul 06 2026 14:00:00 GMT-0500 (hora estándar de Perú)"
-    )
-
-    assert result == datetime(2026, 7, 6, 14, 0, 0)
-
-
-def test_parse_operational_datetime_variant_del():
-
-    result = parse_operational_datetime(
-        "Mon Jul 06 2026 14:00:00 GMT-0500 (hora estándar del Perú)"
-    )
-
-    assert result == datetime(2026, 7, 6, 14, 0, 0)
-
-
-def test_parse_operational_datetime_unparsable_returns_none():
-
-    assert parse_operational_datetime("no es una fecha") is None
-
-
-def test_parse_operational_datetime_none_returns_none():
-
-    assert parse_operational_datetime(None) is None
 
 
 def test_format_for_api_naive_se_interpreta_como_lima():

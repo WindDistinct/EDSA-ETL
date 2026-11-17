@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -285,77 +284,3 @@ class FMTrackClient:
 
             if continuation_token is None:
                 return points
-
-    def get_closest_coordinate(
-        self,
-        object_id: str,
-        target_datetime: str,
-        *,
-        window_seconds: int = 30,
-    ) -> TrackPoint | None:
-        """
-        Obtiene la coordenada más cercana a un instante determinado.
-
-        Args:
-            object_id: UUID del objeto en FM Track.
-            target_datetime: Fecha objetivo en formato ISO 8601 UTC.
-            window_seconds: Ventana de búsqueda alrededor del instante.
-
-        Returns:
-            Coordenada más cercana encontrada o None.
-        """
-
-        target = datetime.fromisoformat(
-            target_datetime.replace("Z", "+00:00")
-        )
-
-        from_datetime = (
-            target.timestamp() - window_seconds
-        )
-
-        to_datetime = (
-            target.timestamp() + window_seconds
-        )
-
-        from_dt = datetime.fromtimestamp(
-            from_datetime,
-            tz=timezone.utc,
-        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-        to_dt = datetime.fromtimestamp(
-            to_datetime,
-            tz=timezone.utc,
-        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-        data = self.get_object_coordinates(
-            object_id=object_id,
-            from_datetime=from_dt,
-            to_datetime=to_dt,
-            limit=100,
-        )
-
-        items = data.get("items", [])
-
-        if not items:
-            return None
-
-        closest = min(
-            items,
-            key=lambda item: abs(
-                (
-                    datetime.fromisoformat(
-                        item["datetime"].replace("Z", "+00:00")
-                    )
-                    - target
-                ).total_seconds()
-            ),
-        )
-
-        position = closest.get("position", {})
-
-        return TrackPoint(
-            datetime=closest.get("datetime"),
-            latitude=position.get("latitude"),
-            longitude=position.get("longitude"),
-            speed=position.get("speed"),
-        )

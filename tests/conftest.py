@@ -17,12 +17,10 @@ class FakeTrackProvider:
         objects: dict[str, Vehicle] | None = None,
         tracks: dict[str, list[TrackPoint]] | None = None,
         errors: dict[str, Exception] | None = None,
-        closest: dict[str, object] | None = None,
     ):
         self._objects = objects or {}
         self._tracks = tracks or {}
         self._errors = errors or {}
-        self._closest = closest or {}
         self.ranges: dict[str, DateRange] = {}
 
     def get_objects(self) -> dict[str, Vehicle]:
@@ -33,19 +31,6 @@ class FakeTrackProvider:
         if object_id in self._errors:
             raise self._errors[object_id]
         return list(self._tracks.get(object_id, []))
-
-    def get_closest_coordinate(
-        self,
-        *,
-        object_id: str,
-        target_datetime: str,
-        window_seconds: int = 30,
-    ):
-        return self._closest.get(object_id)
-
-
-# Alias: los tests de closest-coordinate lo usan con ese nombre.
-FakeFMTrackClient = FakeTrackProvider
 
 
 def vehicle(plate: str, object_id: str | None = None, imei: str = "863238075031916", credential: str = "default") -> Vehicle:
