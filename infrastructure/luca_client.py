@@ -9,7 +9,7 @@ import httpx
 
 from config import settings
 from domain.models import Vehicle
-from infrastructure.http_retry import request_with_retry
+from infrastructure.http_retry import RateGate, request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +53,13 @@ class LucaClient:
             timeout=30.0,
         )
 
+        self._gate = RateGate()
+
     def close(self) -> None:
         self._client.close()
 
     def _post(self, endpoint: str, json: dict[str, Any]) -> httpx.Response:
-        return request_with_retry(self._client, "POST", endpoint, json=json)
+        return request_with_retry(self._client, "POST", endpoint, json=json, gate=self._gate)
 
     def get_objects(self) -> dict[str, Vehicle]:
         """

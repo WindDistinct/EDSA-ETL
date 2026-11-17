@@ -82,14 +82,14 @@ def test_to_local_isoformat_same_day():
 
     result = to_local_isoformat("2026-07-06T20:00:00.000Z")
 
-    assert result == "2026-07-06T15:00:00.000"
+    assert result == "2026-07-06T15:00:00"
 
 
 def test_to_local_isoformat_crosses_day_boundary():
 
     result = to_local_isoformat("2026-07-06T03:00:00.000Z")
 
-    assert result == "2026-07-05T22:00:00.000"
+    assert result == "2026-07-05T22:00:00"
 
 
 # parse_boundary

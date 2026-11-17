@@ -42,6 +42,7 @@ from application.trip_resolver import TripResolver  # noqa: E402
 from domain.models import DateRange, TrackResult, Trip  # noqa: E402
 from domain.rules import LOCAL_TZ  # noqa: E402
 from infrastructure.fmtrack_client import FMTrackClient  # noqa: E402
+from logging_config import configure_logging  # noqa: E402
 
 logger = logging.getLogger("reconsideracion_tramas")
 
@@ -102,7 +103,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
+    configure_logging(logging.WARNING)
 
     df = _leer_listado(args.excel)
     if args.limite:
