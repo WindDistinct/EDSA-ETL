@@ -82,6 +82,7 @@ EDSA-ETL/
 │   ├── luca_client.py             # LUCA_Backend (/reportes): despachos, vehículos, fetch_track
 │   ├── http_retry.py              # Reintentos con backoff exponencial, Retry-After y RateGate
 │   ├── excel_io.py                # Helpers de lectura/normalización de Excel
+│   ├── atu_format.py              # Esquema de tramas ATU (columnas, tipos, fechas) compartido con tools/
 │   ├── track_record_writer.py     # Sink ATU: Excel (hoja por día) + CSV "|"
 │   └── trip_csv_writer.py         # Sink de un CSV por viaje (plantilla de reconsideración)
 │
@@ -93,7 +94,7 @@ EDSA-ETL/
 │       ├── rango_fijo.py          # Un mismo rango para un listado (Excel o vehículos de LUCA)
 │       └── reconsideracion.py     # Excel de viajes rechazados
 │
-├── scripts/                        # Utilidades y flujos puntuales (ver docstring de cada uno)
+├── tools/                          # Herramientas offline sobre archivos (ver docstring de cada una)
 │   ├── despachos_tramas.py        # Cruce de despachos manuales con un Excel de tramas
 │   ├── recuperar_omitidos.py      # Recupera despachos omitidos corregidos a mano
 │   ├── xlsx_to_csv.py / xlsx_formatear.py / unir_hojas.py
@@ -445,7 +446,29 @@ python -m pytest
 Los tests en `tests/` no hacen red: usan un `FakeTrackProvider` (ver `tests/conftest.py`) o
 `httpx.MockTransport` para los clientes HTTP.
 
-Los scripts en `scripts/` sí pegan contra la API real de FM Track y son solo para chequeos manuales (requieren un `.env` válido); no los ejecuta pytest.
+`tools/manual_check_objects.py` sí pega contra la API real de FM Track y es solo para chequeos manuales
+(requiere un `.env` válido); no lo ejecuta pytest.
+
+---
+
+# Herramientas offline (`tools/`)
+
+Trabajan sobre archivos ya generados, sin consultar APIs (salvo `manual_check_objects.py`). Se corren
+desde la raíz del proyecto con `python tools/<herramienta>.py --help`; todas comparten el esquema ATU de
+`infrastructure/atu_format.py` y las reglas de `domain/`.
+
+| Herramienta              | Qué hace                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `despachos_tramas.py`    | Cruza un Excel de despachos cargado a mano con un Excel de tramas: un Excel por día de viaje + Excel de irregularidades (horas corregidas, cruce de medianoche, fin recortado, omitidos). |
+| `recuperar_omitidos.py`  | Suma al documento principal los despachos omitidos que se corrigieron a mano en la hoja "Omitidos". |
+| `xlsx_to_csv.py`         | Junta todas las hojas de uno o varios Excel en un CSV `\|`.                                   |
+| `unir_hojas.py`          | Une las tramas por día en la menor cantidad de hojas posible (límite de filas de Excel).      |
+| `xlsx_formatear.py`      | Normaliza fechas, columnas y tipos de un Excel de tramas sin juntar hojas.                    |
+| `manual_check_objects.py`| Cuántos vehículos ve FM Track y el detalle de una placa.                                      |
+
+`despachos_tramas` y `recuperar_omitidos` no pasan por `run_trips`: cruzan en memoria contra un Excel de
+millones de puntos (búsqueda vectorizada por placa) y su Excel de salida agrupa por día de **inicio del
+viaje**, no por día de cada punto como `TrackRecordWriter`.
 
 ---
 

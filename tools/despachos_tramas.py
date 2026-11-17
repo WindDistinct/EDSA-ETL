@@ -27,11 +27,11 @@ La primera lectura del Excel de tramas es lenta (~5M filas); se guarda una cache
 .pkl al lado del archivo y las siguientes corridas la reutilizan.
 
 Uso:
-    python scripts/despachos_tramas.py input/1205_JUNIO_VARGASANT.xlsx input/vargasant_1205_2026_06_01_06_30.xlsx
-    python scripts/despachos_tramas.py DESPACHOS TRAMAS -o output/vargasant/1205_junio.xlsx
-    python scripts/despachos_tramas.py DESPACHOS TRAMAS --solo-validar
-    python scripts/despachos_tramas.py DESPACHOS TRAMAS --max-horas 5 --horas-recorte 2
-    python scripts/despachos_tramas.py DESPACHOS TRAMAS --usar-fechora
+    python tools/despachos_tramas.py input/1205_JUNIO_VARGASANT.xlsx input/vargasant_1205_2026_06_01_06_30.xlsx
+    python tools/despachos_tramas.py DESPACHOS TRAMAS -o output/vargasant/1205_junio.xlsx
+    python tools/despachos_tramas.py DESPACHOS TRAMAS --solo-validar
+    python tools/despachos_tramas.py DESPACHOS TRAMAS --max-horas 5 --horas-recorte 2
+    python tools/despachos_tramas.py DESPACHOS TRAMAS --usar-fechora
 """
 
 from __future__ import annotations
@@ -49,21 +49,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from domain.horas import DURACION_CORTA, combinar, cruzar_medianoche, normalizar_dni, parse_hora, recortar_fin  # noqa: E402
 from domain.models import Sentido  # noqa: E402
-
-COLUMNS = [
-    "RUC_EMPRESA",
-    "PLACA",
-    "IMEI",
-    "CODIGO_RUTA",
-    "FECHORA_INI_VIAJE",
-    "FECHA_HORA_TRACK",
-    "LATITUD",
-    "LONGITUD",
-    "VELOCIDAD",
-    "SENTIDO",
-    "NRO_DOC_CONDUCTOR",
-]
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
+from infrastructure.atu_format import ATU_COLUMNS as COLUMNS  # noqa: E402
+from infrastructure.atu_format import DATE_FMT  # noqa: E402
 
 def fechora_del_dia(value, fecha: pd.Timestamp, dias_extra: int) -> pd.Timestamp | None:
     """Devuelve la fecha-hora corregida a mano, o None si no cae en el dia del despacho."""

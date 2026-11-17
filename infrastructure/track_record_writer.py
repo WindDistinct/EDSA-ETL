@@ -7,8 +7,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from domain.models import Sentido, TrackPoint, Trip
-
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
+from infrastructure.atu_format import ATU_COLUMNS, CSV_SEP, DATE_FMT
 
 
 def _as_text(value) -> str:
@@ -50,19 +49,7 @@ class TrackRecordWriter:
     con separador "|". No es reanudable: cada corrida reescribe el archivo.
     """
 
-    BASE_HEADERS = [
-        "RUC_EMPRESA",
-        "PLACA",
-        "IMEI",
-        "CODIGO_RUTA",
-        "FECHORA_INI_VIAJE",
-        "FECHA_HORA_TRACK",
-        "LATITUD",
-        "LONGITUD",
-        "VELOCIDAD",
-        "SENTIDO",
-        "NRO_DOC_CONDUCTOR",
-    ]
+    BASE_HEADERS = list(ATU_COLUMNS)
 
     def __init__(
         self,
@@ -71,7 +58,7 @@ class TrackRecordWriter:
         *,
         write_csv: bool = True,
         csv_file: str | None = None,
-        csv_sep: str = "|",
+        csv_sep: str = CSV_SEP,
     ):
 
         self.output_file = Path(output_file)

@@ -9,8 +9,8 @@ Excel con una hoja por dia. Los IDs se mantienen como texto y las fechas con el
 formato "YYYY-MM-DD HH:MM:SS".
 
 Uso:
-    python scripts/unir_hojas.py output/1205_JUNIO_VARGASANT_tramas_completo.csv
-    python scripts/unir_hojas.py output/archivo.xlsx -o output/archivo_unido.xlsx
+    python tools/unir_hojas.py output/1205_JUNIO_VARGASANT_tramas_completo.csv
+    python tools/unir_hojas.py output/archivo.xlsx -o output/archivo_unido.xlsx
 """
 
 from __future__ import annotations
@@ -21,20 +21,11 @@ from pathlib import Path
 
 import pandas as pd
 
-COLUMNS = [
-    "RUC_EMPRESA",
-    "PLACA",
-    "IMEI",
-    "CODIGO_RUTA",
-    "FECHORA_INI_VIAJE",
-    "FECHA_HORA_TRACK",
-    "LATITUD",
-    "LONGITUD",
-    "VELOCIDAD",
-    "SENTIDO",
-    "NRO_DOC_CONDUCTOR",
-]
-NUMERIC_COLUMNS = ["CODIGO_RUTA", "LATITUD", "LONGITUD", "VELOCIDAD", "SENTIDO"]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from infrastructure.atu_format import ATU_COLUMNS as COLUMNS  # noqa: E402
+from infrastructure.atu_format import CSV_SEP, missing_columns  # noqa: E402
+from infrastructure.atu_format import EXCEL_NUMERIC_COLUMNS as NUMERIC_COLUMNS  # noqa: E402
 MAX_FILAS_HOJA = 1_048_575  # 1,048,576 menos el encabezado
 
 
@@ -64,7 +55,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("input", help="CSV o Excel de tramas")
     parser.add_argument("-o", "--output", help="Excel de salida (por defecto <entrada>_unido.xlsx)")
-    parser.add_argument("--sep", default="|", help="Separador del CSV (por defecto '|')")
+    parser.add_argument("--sep", default=CSV_SEP, help=f"Separador del CSV (por defecto '{CSV_SEP}')")
     parser.add_argument("--max-filas", type=int, default=MAX_FILAS_HOJA, help="Filas maximas por hoja")
     args = parser.parse_args()
 
@@ -78,7 +69,7 @@ def main() -> None:
 
     print(f"Leyendo {src}...")
     df = load_tramas(src, args.sep)
-    missing = [c for c in COLUMNS if c not in df.columns]
+    missing = missing_columns(df)
     if missing:
         sys.exit(f"ERROR: en {src} faltan columnas: {missing}")
     df = df[COLUMNS].sort_values(["FECHORA_INI_VIAJE", "PLACA", "FECHA_HORA_TRACK"], ignore_index=True)

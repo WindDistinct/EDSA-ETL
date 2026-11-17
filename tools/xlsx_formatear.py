@@ -10,11 +10,11 @@ Lo unico que cambia es el formato de los campos:
 - LATITUD / LONGITUD / VELOCIDAD quedan como numero.
 
 Uso:
-    python scripts/xlsx_formatear.py input/archivo.xlsx
-    python scripts/xlsx_formatear.py input/archivo.xlsx -o output/archivo_fmt.xlsx
-    python scripts/xlsx_formatear.py "input/*.xlsx" --suffix _fmt
-    python scripts/xlsx_formatear.py input/archivo.xlsx --in-place
-    python scripts/xlsx_formatear.py input/archivo.xlsx --dates datetime
+    python tools/xlsx_formatear.py input/archivo.xlsx
+    python tools/xlsx_formatear.py input/archivo.xlsx -o output/archivo_fmt.xlsx
+    python tools/xlsx_formatear.py "input/*.xlsx" --suffix _fmt
+    python tools/xlsx_formatear.py input/archivo.xlsx --in-place
+    python tools/xlsx_formatear.py input/archivo.xlsx --dates datetime
 """
 
 from __future__ import annotations
@@ -26,35 +26,16 @@ from pathlib import Path
 
 import pandas as pd
 
-COLUMNS = [
-    "RUC_EMPRESA",
-    "PLACA",
-    "IMEI",
-    "CODIGO_RUTA",
-    "FECHORA_INI_VIAJE",
-    "FECHA_HORA_TRACK",
-    "LATITUD",
-    "LONGITUD",
-    "VELOCIDAD",
-    "SENTIDO",
-    "NRO_DOC_CONDUCTOR",
-]
-DATE_COLUMNS = ["FECHORA_INI_VIAJE", "FECHA_HORA_TRACK"]
-NUMERIC_COLUMNS = ["LATITUD", "LONGITUD", "VELOCIDAD"]
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
-EXCEL_DATE_FMT = "YYYY-MM-DD HH:MM:SS"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-
-def normalize_dates_text(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series, errors="coerce")
-    out = parsed.dt.strftime(DATE_FMT)
-    fallback = series.astype("string").str.replace("T", " ", regex=False)
-    return out.fillna(fallback)
+from infrastructure.atu_format import ATU_COLUMNS as COLUMNS  # noqa: E402
+from infrastructure.atu_format import COORD_COLUMNS as NUMERIC_COLUMNS  # noqa: E402
+from infrastructure.atu_format import DATE_COLUMNS, EXCEL_DATE_FMT, missing_columns, normalize_dates_text  # noqa: E402
 
 
 def format_sheet(df: pd.DataFrame, dates_mode: str) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
-    missing = [c for c in COLUMNS if c not in df.columns]
+    missing = missing_columns(df)
     if missing:
         raise KeyError(f"faltan columnas: {missing}")
     df = df[COLUMNS].copy()

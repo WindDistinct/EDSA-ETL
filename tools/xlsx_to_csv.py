@@ -7,8 +7,8 @@
   (p.ej. NRO_DOC_CONDUCTOR = "06583153") ni notacion cientifica en el IMEI.
 
 Uso:
-    python scripts/xlsx_to_csv.py input/archivo.xlsx -o output/salida.csv
-    python scripts/xlsx_to_csv.py "input/*.xlsx" -o output/salida.csv
+    python tools/xlsx_to_csv.py input/archivo.xlsx -o output/salida.csv
+    python tools/xlsx_to_csv.py "input/*.xlsx" -o output/salida.csv
 """
 
 from __future__ import annotations
@@ -16,31 +16,14 @@ from __future__ import annotations
 import argparse
 import glob
 import sys
+from pathlib import Path
 
 import pandas as pd
 
-COLUMNS = [
-    "RUC_EMPRESA",
-    "PLACA",
-    "IMEI",
-    "CODIGO_RUTA",
-    "FECHORA_INI_VIAJE",
-    "FECHA_HORA_TRACK",
-    "LATITUD",
-    "LONGITUD",
-    "VELOCIDAD",
-    "SENTIDO",
-    "NRO_DOC_CONDUCTOR",
-]
-DATE_COLUMNS = ["FECHORA_INI_VIAJE", "FECHA_HORA_TRACK"]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-
-def normalize_dates(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series, errors="coerce")
-    out = parsed.dt.strftime("%Y-%m-%d %H:%M:%S")
-    # Si algo no se pudo parsear, al menos quitamos la "T" del texto original.
-    fallback = series.astype("string").str.replace("T", " ", regex=False)
-    return out.fillna(fallback)
+from infrastructure.atu_format import ATU_COLUMNS as COLUMNS  # noqa: E402
+from infrastructure.atu_format import CSV_SEP, DATE_COLUMNS, missing_columns, normalize_dates_text  # noqa: E402
 
 
 def load_frames(patterns: list[str]) -> list[pd.DataFrame]:
@@ -61,12 +44,12 @@ def load_frames(patterns: list[str]) -> list[pd.DataFrame]:
             if df.empty:
                 continue
             df.columns = [str(c).strip() for c in df.columns]
-            missing = [c for c in COLUMNS if c not in df.columns]
+            missing = missing_columns(df)
             if missing:
                 sys.exit(f"ERROR: en {path} hoja {name!r} faltan columnas: {missing}")
             df = df[COLUMNS].copy()
             for col in DATE_COLUMNS:
-                df[col] = normalize_dates(df[col])
+                df[col] = normalize_dates_text(df[col])
             frames.append(df)
             print(f"  {path} :: hoja {name!r} -> {len(df)} filas")
     return frames
@@ -76,7 +59,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("inputs", nargs="+", help="Archivos .xlsx o patrones glob")
     parser.add_argument("-o", "--output", required=True, help="Ruta del CSV de salida")
-    parser.add_argument("--sep", default="|", help="Separador de campos (por defecto '|')")
+    parser.add_argument("--sep", default=CSV_SEP, help=f"Separador de campos (por defecto '{CSV_SEP}')")
     parser.add_argument(
         "--dedup",
         action="store_true",

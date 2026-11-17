@@ -16,8 +16,8 @@ Reglas:
 - El documento principal NO se modifica: se escriben archivos nuevos con sufijo.
 
 Uso:
-    python scripts/recuperar_omitidos.py "input/1205_JUNIO_VARGASANT_tramas_irregularidades (2).xlsx"
-    python scripts/recuperar_omitidos.py CORREGIDO --sin-xlsx
+    python tools/recuperar_omitidos.py "input/1205_JUNIO_VARGASANT_tramas_irregularidades (2).xlsx"
+    python tools/recuperar_omitidos.py CORREGIDO --sin-xlsx
 """
 
 from __future__ import annotations
@@ -29,10 +29,13 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-from despachos_tramas import COLUMNS, DATE_FMT, cruzar, load_despachos, load_tramas, write_resultado
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from domain.horas import MAX_DURACION_VIAJE, RECORTE_VIAJE, combinar, cruzar_medianoche, normalizar_dni, parse_hora
-from domain.models import Sentido
+from domain.horas import MAX_DURACION_VIAJE, RECORTE_VIAJE, combinar, cruzar_medianoche, normalizar_dni, parse_hora  # noqa: E402
+from domain.models import Sentido  # noqa: E402
+from infrastructure.atu_format import ATU_COLUMNS as COLUMNS  # noqa: E402
+from infrastructure.atu_format import CSV_SEP, DATE_FMT, EXCEL_NUMERIC_COLUMNS  # noqa: E402
+from tools.despachos_tramas import cruzar, load_despachos, load_tramas, write_resultado  # noqa: E402
 
 COL_HORA = "HORA SENTIDO (original)"
 COL_LLEG = "LLEG. (original)"
@@ -134,7 +137,7 @@ def main() -> None:
     parser.add_argument("--tramas", default="input/vargasant_1205_2026_06_01_06_30.xlsx", help="Excel de tramas")
     parser.add_argument("--principal", default="output/1205_JUNIO_VARGASANT_tramas.csv", help="CSV principal de tramas")
     parser.add_argument("-o", "--output-dir", help="Carpeta de salida (por defecto la del CSV principal)")
-    parser.add_argument("--sep", default="|", help="Separador del CSV (por defecto '|')")
+    parser.add_argument("--sep", default=CSV_SEP, help=f"Separador del CSV (por defecto '{CSV_SEP}')")
     parser.add_argument("--sin-xlsx", action="store_true", help="No escribir el Excel completo (es lo mas lento)")
     args = parser.parse_args()
 
@@ -209,7 +212,7 @@ def main() -> None:
         print(f"Escribiendo {xlsx_path} (tarda varios minutos)...")
         for col in ("FECHORA_INI_VIAJE", "FECHA_HORA_TRACK"):
             completo[col] = pd.to_datetime(completo[col])
-        for col in ("CODIGO_RUTA", "LATITUD", "LONGITUD", "VELOCIDAD", "SENTIDO"):
+        for col in EXCEL_NUMERIC_COLUMNS:
             completo[col] = pd.to_numeric(completo[col], errors="coerce")
         write_resultado(completo, xlsx_path)
 
